@@ -18,6 +18,8 @@ export default function LoginPage() {
         setLoading(true);
         try {
             const data = await authApi.login(values.username, values.password);
+            // 先保存 token,再调用 getMe
+            localStorage.setItem('token', data.access_token);
             const user = await authApi.getMe();
             setAuth(data.access_token, user);
             message.success('登录成功');
