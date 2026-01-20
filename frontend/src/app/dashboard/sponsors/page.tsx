@@ -313,9 +313,24 @@ export default function SponsorsPage() {
                 items={adGroups.map(g => ({
                     key: String(g.id),
                     label: (
-                        <span>
+                        <span className="flex items-center gap-2">
                             {g.name}
-                            <Tag className="ml-2">{g.sponsors?.length || 0}</Tag>
+                            <Tag>{g.sponsors?.length || 0}</Tag>
+                            <Popconfirm
+                                title="确定删除此广告组?"
+                                description="删除后,该组下的所有广告也会被删除"
+                                onConfirm={(e) => { e?.stopPropagation(); handleDeleteGroup(g.id); }}
+                                okText="删除"
+                                cancelText="取消"
+                            >
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    danger
+                                    icon={<DeleteOutlined />}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            </Popconfirm>
                         </span>
                     ),
                 }))}
