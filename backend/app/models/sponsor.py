@@ -32,8 +32,8 @@ class Sponsor(Base):
     ad_group_id = Column(Integer, ForeignKey("ad_groups.id", ondelete="CASCADE"), nullable=False, index=True, comment="所属广告组ID")
     title = Column(String(200), nullable=False, comment="广告标题")
     description = Column(Text, nullable=True, comment="广告描述")
-    media_type = Column(String(20), nullable=True, comment="媒体类型: photo/video/none")
-    telegram_file_id = Column(String(200), nullable=True, comment="Telegram file_id")
+    media_type = Column(String(20), nullable=True, comment="媒体类型: photo/video/media_group/none")
+    telegram_file_id = Column(String(200), nullable=True, comment="Telegram file_id (单文件时使用)")
     button_text = Column(String(50), nullable=True, comment="按钮文字")
     button_url = Column(String(500), nullable=True, comment="跳转链接")
     is_active = Column(Boolean, default=True, comment="是否启用")
@@ -42,6 +42,7 @@ class Sponsor(Base):
     
     # 关系
     ad_group = relationship("AdGroup", back_populates="sponsors")
+    media_files = relationship("SponsorMediaFile", back_populates="sponsor", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Sponsor(id={self.id}, title='{self.title}')>"

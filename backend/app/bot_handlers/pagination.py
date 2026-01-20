@@ -200,6 +200,9 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
 
 async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_id: int, invite_code: str):
     """发送赞助商广告"""
+    from app.models import SponsorMediaFile
+    from sqlalchemy.orm import selectinload
+    
     # 获取该邀请链接绑定的广告组
     ad_groups_result = await db.execute(
         select(AdGroup)
@@ -211,10 +214,11 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
     if not ad_groups:
         return
     
-    # 获取所有广告
+    # 获取所有广告 (包含媒体文件)
     ad_group_ids = [ag.id for ag in ad_groups]
     sponsors_result = await db.execute(
         select(Sponsor)
+        .options(selectinload(Sponsor.media_files))
         .where(Sponsor.ad_group_id.in_(ad_group_ids), Sponsor.is_active == True)
         .order_by(Sponsor.display_order)
     )
@@ -242,21 +246,48 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
         ])
     
     # 发送广告
-    if sponsor.telegram_file_id:
+    if sponsor.media_type == "media_group" and sponsor.media_files:
+        # 发送媒体组
+        from aiogram.types import InputMediaPhoto, InputMediaVideo
+        
+        media_group = []
+        sorted_files = sorted(sponsor.media_files, key=lambda x: x.position)
+        for i, media_file in enumerate(sorted_files):
+            if media_file.file_type == "photo":
+                media_group.append(InputMediaPhoto(
+                    media=media_file.telegram_file_id,
+                    caption=ad_text if i == 0 else None,
+                    parse_mode="HTML" if i == 0 else None,
+                ))
+            else:
+                media_group.append(InputMediaVideo(
+                    media=media_file.telegram_file_id,
+                    caption=ad_text if i == 0 else None,
+                    parse_mode="HTML" if i == 0 else None,
+                ))
+        
+        await message.answer_media_group(media=media_group)
+        if keyboard:
+            await message.answer("👆 点击上方广告了解更多", reply_markup=keyboard)
+    elif sponsor.telegram_file_id:
+        # 发送单个媒体
         if sponsor.media_type == "photo":
             await message.answer_photo(
                 photo=sponsor.telegram_file_id,
                 caption=ad_text,
+                parse_mode="HTML",
                 reply_markup=keyboard,
             )
         else:
             await message.answer_video(
                 video=sponsor.telegram_file_id,
                 caption=ad_text,
+                parse_mode="HTML",
                 reply_markup=keyboard,
             )
     else:
-        await message.answer(ad_text, reply_markup=keyboard)
+        # 纯文字广告
+        await message.answer(ad_text, reply_markup=keyboard, parse_mode="HTML")
     
     # 记录广告展示
     stat = Statistics(

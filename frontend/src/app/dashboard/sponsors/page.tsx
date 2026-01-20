@@ -170,13 +170,26 @@ export default function SponsorsPage() {
                 formData.append('button_url', values.button_url || '');
                 formData.append('is_active', String(values.is_active ?? true));
                 if (values.description) formData.append('description', values.description);
-                if (values.media && values.media.length > 0) {
-                    formData.append('media', values.media[0].originFileObj);
-                }
 
-                await api.post('/sponsors/with-media', formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' },
-                });
+                // 支持多文件上传
+                if (values.media && values.media.length > 0) {
+                    values.media.forEach((file: any) => {
+                        formData.append('files', file.originFileObj);
+                    });
+                    await api.post('/sponsors/with-media-group', formData, {
+                        headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                } else {
+                    // 无媒体时使用 JSON 创建
+                    await sponsorsApi.create({
+                        ad_group_id: selectedGroupId,
+                        title: values.title,
+                        description: values.description,
+                        button_text: values.button_text,
+                        button_url: values.button_url,
+                        is_active: values.is_active ?? true,
+                    });
+                }
                 message.success('创建成功');
             }
             setSponsorModalOpen(false);
@@ -372,11 +385,12 @@ export default function SponsorsPage() {
                     {!editingSponsor && (
                         <Form.Item
                             name="media"
-                            label="广告素材 (可选)"
+                            label="广告素材 (可选,支持多个)"
                             valuePropName="fileList"
                             getValueFromEvent={normFile}
+                            extra="可上传 1-10 个图片或视频,多个文件将作为媒体组发送"
                         >
-                            <Upload beforeUpload={() => false} maxCount={1} accept="image/*,video/*" listType="picture">
+                            <Upload beforeUpload={() => false} maxCount={10} multiple accept="image/*,video/*" listType="picture">
                                 <Button icon={<UploadOutlined />}>选择图片或视频</Button>
                             </Upload>
                         </Form.Item>

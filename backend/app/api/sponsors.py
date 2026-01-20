@@ -509,3 +509,117 @@ async def reorder_sponsors(
     
     await db.commit()
     return {"message": "排序已更新", "count": len(data.sponsor_ids)}
+
+
+@router.post("/with-media-group", response_model=SponsorResponse, status_code=status.HTTP_201_CREATED)
+async def create_sponsor_with_media_group(
+    ad_group_id: int = Form(...),
+    title: str = Form(...),
+    description: str = Form(None),
+    button_text: str = Form(...),
+    button_url: str = Form(...),
+    is_active: bool = Form(True),
+    files: List[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """创建广告 (支持媒体组上传,2-10个文件)"""
+    from app.models import SponsorMediaFile
+    
+    if len(files) < 1:
+        raise HTTPException(status_code=400, detail="至少需要上传 1 个文件")
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="最多上传 10 个文件")
+    
+    # 检查广告组是否存在
+    group_result = await db.execute(
+        select(AdGroup).where(AdGroup.id == ad_group_id)
+    )
+    if not group_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="广告组不存在"
+        )
+    
+    # 获取最大排序值
+    max_order_result = await db.execute(
+        select(Sponsor.display_order)
+        .where(Sponsor.ad_group_id == ad_group_id)
+        .order_by(Sponsor.display_order.desc())
+        .limit(1)
+    )
+    max_order = max_order_result.scalar() or 0
+    
+    upload_service = get_upload_service()
+    
+    # 确定媒体类型
+    if len(files) == 1:
+        media_type = "photo" if files[0].content_type.startswith("image/") else "video"
+    else:
+        media_type = "media_group"
+    
+    # 创建广告记录
+    sponsor = Sponsor(
+        ad_group_id=ad_group_id,
+        title=title,
+        description=description,
+        media_type=media_type,
+        telegram_file_id=None,  # 使用 media_files 关系
+        button_text=button_text,
+        button_url=button_url,
+        is_active=is_active,
+        display_order=max_order + 1,
+    )
+    db.add(sponsor)
+    await db.flush()
+    
+    # 上传每个文件
+    for i, file in enumerate(files):
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        content_type = file.content_type or ""
+        if content_type.startswith("image/"):
+            file_type = "photo"
+            max_size = settings.MAX_IMAGE_SIZE
+        elif content_type.startswith("video/"):
+            file_type = "video"
+            max_size = settings.MAX_VIDEO_SIZE
+        else:
+            raise HTTPException(status_code=400, detail=f"文件 {file.filename} 类型不支持")
+        
+        if file_size > max_size:
+            raise HTTPException(status_code=400, detail=f"文件 {file.filename} 过大")
+        
+        ext = file.filename.split(".")[-1] if "." in file.filename else ""
+        unique_filename = f"{uuid.uuid4()}.{ext}"
+        
+        try:
+            telegram_file_id = await upload_service.upload_and_get_file_id(
+                file_content=file_content,
+                filename=unique_filename,
+                file_type=file_type,
+                caption=f"广告素材: {title}" if i == 0 else None,
+                delete_after=True,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
+        
+        # 如果只有一个文件,也保存到 telegram_file_id
+        if len(files) == 1:
+            sponsor.telegram_file_id = telegram_file_id
+        
+        # 创建媒体文件记录
+        media_file = SponsorMediaFile(
+            sponsor_id=sponsor.id,
+            file_type=file_type,
+            telegram_file_id=telegram_file_id,
+            file_size=file_size,
+            position=i,
+        )
+        db.add(media_file)
+    
+    await db.commit()
+    await db.refresh(sponsor)
+    
+    return sponsor
