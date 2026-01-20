@@ -301,3 +301,27 @@ async def set_as_cover(
     await db.refresh(resource)
     
     return resource
+
+
+class ResourceReorderRequest(BaseModel):
+    """资源重排序请求"""
+    resource_ids: List[int]
+
+
+@router.patch("/reorder", status_code=status.HTTP_200_OK)
+async def reorder_resources(
+    data: ResourceReorderRequest,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """重新排序资源"""
+    for index, resource_id in enumerate(data.resource_ids):
+        result = await db.execute(
+            select(Resource).where(Resource.id == resource_id)
+        )
+        resource = result.scalar_one_or_none()
+        if resource:
+            resource.display_order = index + 1
+    
+    await db.commit()
+    return {"message": "排序已更新", "count": len(data.resource_ids)}

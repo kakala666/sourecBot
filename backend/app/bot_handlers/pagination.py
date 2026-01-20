@@ -270,14 +270,27 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
 
 async def send_preview_end(message, db, user_id: int, invite_code: str):
     """发送预览结束消息"""
+    from sqlalchemy import select
+    from app.models import Config
+    
+    # 从配置表读取设置
+    async def get_config_value(key: str, default: str) -> str:
+        result = await db.execute(select(Config).where(Config.key == key))
+        config = result.scalar_one_or_none()
+        return config.value if config and config.value else default
+    
+    preview_url = await get_config_value("preview_end_url", "https://t.me/your_channel")
+    preview_text = await get_config_value("preview_end_text", "🎬 <b>预览结束</b>\n\n感谢观看!更多精彩内容请进入官方平台。")
+    preview_button = await get_config_value("preview_end_button", "🚀 进入官方平台")
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 进入官方平台", url="https://example.com")]  # TODO: 配置跳转链接
+        [InlineKeyboardButton(text=preview_button, url=preview_url)]
     ])
     
     await message.answer(
-        "🎬 <b>预览结束</b>\n\n"
-        "感谢观看!更多精彩内容请进入官方平台。",
+        preview_text,
         reply_markup=keyboard,
+        parse_mode="HTML",
     )
     
     # 记录统计

@@ -321,3 +321,102 @@ async def get_daily_stats(
         ))
     
     return stats
+
+
+class FunnelStep(BaseModel):
+    """漏斗步骤"""
+    step: str
+    page: int
+    users: int
+    rate: float  # 相对于上一步的留存率
+    total_rate: float  # 相对于第一步的留存率
+
+
+class FunnelStats(BaseModel):
+    """漏斗统计"""
+    total_starts: int
+    steps: List[FunnelStep]
+
+
+@router.get("/funnel", response_model=FunnelStats)
+async def get_funnel_stats(
+    invite_code: Optional[str] = None,
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """获取用户行为漏斗统计"""
+    now = datetime.utcnow()
+    since_date = now - timedelta(days=days)
+    
+    # 构建基础过滤条件
+    base_filter = [Statistics.created_at >= since_date]
+    if invite_code:
+        base_filter.append(Statistics.invite_code == invite_code)
+    
+    # 第 0 步: 启动用户 (user_start 事件)
+    starts_result = await db.execute(
+        select(func.count(func.distinct(Statistics.user_id)))
+        .select_from(Statistics)
+        .where(and_(
+            Statistics.event_type == "user_start",
+            *base_filter
+        ))
+    )
+    total_starts = starts_result.scalar() or 0
+    
+    # 获取每个页面的用户数
+    steps = []
+    prev_users = total_starts
+    
+    for page_num in range(1, 6):  # 页面 1-5
+        page_users_result = await db.execute(
+            select(func.count(func.distinct(Statistics.user_id)))
+            .select_from(Statistics)
+            .where(and_(
+                Statistics.event_type == "page_view",
+                Statistics.page_number == page_num,
+                *base_filter
+            ))
+        )
+        page_users = page_users_result.scalar() or 0
+        
+        rate = (page_users / prev_users * 100) if prev_users > 0 else 0
+        total_rate = (page_users / total_starts * 100) if total_starts > 0 else 0
+        
+        steps.append(FunnelStep(
+            step=f"第 {page_num} 页",
+            page=page_num,
+            users=page_users,
+            rate=round(rate, 1),
+            total_rate=round(total_rate, 1),
+        ))
+        
+        prev_users = page_users
+    
+    # 预览结束
+    preview_end_result = await db.execute(
+        select(func.count(func.distinct(Statistics.user_id)))
+        .select_from(Statistics)
+        .where(and_(
+            Statistics.event_type == "preview_end",
+            *base_filter
+        ))
+    )
+    preview_end_users = preview_end_result.scalar() or 0
+    
+    rate = (preview_end_users / prev_users * 100) if prev_users > 0 else 0
+    total_rate = (preview_end_users / total_starts * 100) if total_starts > 0 else 0
+    
+    steps.append(FunnelStep(
+        step="预览结束",
+        page=6,
+        users=preview_end_users,
+        rate=round(rate, 1),
+        total_rate=round(total_rate, 1),
+    ))
+    
+    return FunnelStats(
+        total_starts=total_starts,
+        steps=steps,
+    )

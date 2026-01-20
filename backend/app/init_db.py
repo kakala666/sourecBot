@@ -75,6 +75,21 @@ async def create_default_config():
                 "value": "2,3,4,5,5,5,5",
                 "description": "翻页等待时间(秒),逗号分隔"
             },
+            {
+                "key": "preview_end_url",
+                "value": "https://t.me/your_channel",
+                "description": "预览结束跳转链接"
+            },
+            {
+                "key": "preview_end_text",
+                "value": "🎬 <b>预览结束</b>\n\n感谢观看!更多精彩内容请进入官方平台。",
+                "description": "预览结束提示文案"
+            },
+            {
+                "key": "preview_end_button",
+                "value": "🚀 进入官方平台",
+                "description": "预览结束按钮文字"
+            },
         ]
         
         for config_data in default_configs:

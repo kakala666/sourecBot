@@ -10,6 +10,7 @@ import {
     BarChartOutlined,
     LogoutOutlined,
     UserOutlined,
+    SettingOutlined,
 } from '@ant-design/icons';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
@@ -44,6 +45,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         { key: '/dashboard/resources', icon: <FileImageOutlined />, label: '资源管理' },
         { key: '/dashboard/sponsors', icon: <NotificationOutlined />, label: '广告管理' },
         { key: '/dashboard/statistics', icon: <BarChartOutlined />, label: '统计报表' },
+        { key: '/dashboard/settings', icon: <SettingOutlined />, label: '系统设置' },
     ];
 
     const userMenuItems = [

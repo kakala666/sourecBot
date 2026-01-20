@@ -1,9 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, Switch, message, Space, Tag, Tabs, Popconfirm, Select } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined } from '@ant-design/icons';
-import { sponsorsApi, inviteLinksApi } from '@/lib/api';
+import { Table, Button, Modal, Form, Input, Switch, message, Space, Tag, Tabs, Popconfirm, Select, Upload } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, HolderOutlined } from '@ant-design/icons';
+import { sponsorsApi, inviteLinksApi, api } from '@/lib/api';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface AdGroup {
     id: number;
@@ -31,6 +34,26 @@ interface InviteLink {
     name: string;
 }
 
+// 可排序行组件
+function SortableRow({ children, ...props }: any) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+        id: props['data-row-key'],
+    });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        cursor: 'move',
+    };
+
+    return (
+        <tr {...props} ref={setNodeRef} style={style} {...attributes} {...listeners}>
+            {children}
+        </tr>
+    );
+}
+
 export default function SponsorsPage() {
     const [loading, setLoading] = useState(true);
     const [adGroups, setAdGroups] = useState<AdGroup[]>([]);
@@ -42,10 +65,17 @@ export default function SponsorsPage() {
     const [sponsorModalOpen, setSponsorModalOpen] = useState(false);
     const [linkModalOpen, setLinkModalOpen] = useState(false);
     const [editingSponsor, setEditingSponsor] = useState<Sponsor | null>(null);
+    const [uploading, setUploading] = useState(false);
 
     const [groupForm] = Form.useForm();
     const [sponsorForm] = Form.useForm();
     const [linkForm] = Form.useForm();
+
+    // 拖拽传感器配置
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    );
 
     useEffect(() => {
         loadData();
@@ -112,7 +142,7 @@ export default function SponsorsPage() {
     const handleCreateSponsor = () => {
         setEditingSponsor(null);
         sponsorForm.resetFields();
-        sponsorForm.setFieldsValue({ ad_group_id: selectedGroupId, is_active: true });
+        sponsorForm.setFieldsValue({ is_active: true });
         setSponsorModalOpen(true);
     };
 
@@ -124,18 +154,37 @@ export default function SponsorsPage() {
 
     const handleSubmitSponsor = async () => {
         const values = await sponsorForm.validateFields();
+        setUploading(true);
+
         try {
             if (editingSponsor) {
+                // 编辑模式 - 使用 JSON
                 await sponsorsApi.update(editingSponsor.id, values);
                 message.success('更新成功');
             } else {
-                await sponsorsApi.create({ ...values, ad_group_id: selectedGroupId });
+                // 创建模式 - 使用 FormData 支持文件上传
+                const formData = new FormData();
+                formData.append('ad_group_id', String(selectedGroupId));
+                formData.append('title', values.title);
+                formData.append('button_text', values.button_text || '');
+                formData.append('button_url', values.button_url || '');
+                formData.append('is_active', String(values.is_active ?? true));
+                if (values.description) formData.append('description', values.description);
+                if (values.media && values.media.length > 0) {
+                    formData.append('media', values.media[0].originFileObj);
+                }
+
+                await api.post('/sponsors/with-media', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
                 message.success('创建成功');
             }
             setSponsorModalOpen(false);
             loadSponsors();
-        } catch (error) {
-            message.error('操作失败');
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '操作失败');
+        } finally {
+            setUploading(false);
         }
     };
 
@@ -146,6 +195,28 @@ export default function SponsorsPage() {
             loadSponsors();
         } catch (error) {
             message.error('删除失败');
+        }
+    };
+
+    // 处理拖拽排序
+    const handleDragEnd = async (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+
+        const oldIndex = sponsors.findIndex((s) => s.id === active.id);
+        const newIndex = sponsors.findIndex((s) => s.id === over.id);
+        const newSponsors = arrayMove(sponsors, oldIndex, newIndex);
+        setSponsors(newSponsors);
+
+        // 调用 API 保存排序
+        try {
+            await api.patch('/sponsors/reorder', {
+                sponsor_ids: newSponsors.map((s) => s.id),
+            });
+            message.success('排序已保存');
+        } catch (error) {
+            message.error('保存排序失败');
+            loadSponsors();
         }
     };
 
@@ -170,13 +241,29 @@ export default function SponsorsPage() {
 
     const selectedGroup = adGroups.find(g => g.id === selectedGroupId);
 
+    const normFile = (e: any) => {
+        if (Array.isArray(e)) return e;
+        return e?.fileList;
+    };
+
     const columns = [
-        { title: '排序', dataIndex: 'display_order', key: 'display_order', width: 60 },
+        {
+            title: '',
+            key: 'drag',
+            width: 40,
+            render: () => <HolderOutlined style={{ cursor: 'grab', color: '#999' }} />,
+        },
+        { title: '序号', dataIndex: 'display_order', key: 'display_order', width: 60 },
         { title: '标题', dataIndex: 'title', key: 'title' },
+        {
+            title: '媒体',
+            key: 'media',
+            render: (_: any, r: Sponsor) => r.telegram_file_id ? <Tag color="blue">{r.media_type}</Tag> : <span className="text-gray-400">无</span>,
+        },
         {
             title: '按钮',
             key: 'button',
-            render: (_: any, r: Sponsor) => r.button_text ? `${r.button_text} → ${r.button_url?.slice(0, 30)}...` : '-',
+            render: (_: any, r: Sponsor) => r.button_text ? `${r.button_text}` : '-',
         },
         {
             title: '状态',
@@ -238,7 +325,22 @@ export default function SponsorsPage() {
                         </Space>
                     </div>
 
-                    <Table columns={columns} dataSource={sponsors} rowKey="id" loading={loading} />
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                        <SortableContext items={sponsors.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+                            <Table
+                                columns={columns}
+                                dataSource={sponsors}
+                                rowKey="id"
+                                loading={loading}
+                                components={{
+                                    body: {
+                                        row: SortableRow,
+                                    },
+                                }}
+                                pagination={false}
+                            />
+                        </SortableContext>
+                    </DndContext>
                 </>
             )}
 
@@ -252,7 +354,14 @@ export default function SponsorsPage() {
             </Modal>
 
             {/* 广告 Modal */}
-            <Modal title={editingSponsor ? '编辑广告' : '添加广告'} open={sponsorModalOpen} onOk={handleSubmitSponsor} onCancel={() => setSponsorModalOpen(false)} width={600}>
+            <Modal
+                title={editingSponsor ? '编辑广告' : '添加广告'}
+                open={sponsorModalOpen}
+                onOk={handleSubmitSponsor}
+                onCancel={() => setSponsorModalOpen(false)}
+                width={600}
+                confirmLoading={uploading}
+            >
                 <Form form={sponsorForm} layout="vertical">
                     <Form.Item name="title" label="标题" rules={[{ required: true }]}>
                         <Input />
@@ -260,14 +369,23 @@ export default function SponsorsPage() {
                     <Form.Item name="description" label="描述">
                         <Input.TextArea rows={2} />
                     </Form.Item>
-                    <Form.Item name="button_text" label="按钮文字">
+                    {!editingSponsor && (
+                        <Form.Item
+                            name="media"
+                            label="广告素材 (可选)"
+                            valuePropName="fileList"
+                            getValueFromEvent={normFile}
+                        >
+                            <Upload beforeUpload={() => false} maxCount={1} accept="image/*,video/*" listType="picture">
+                                <Button icon={<UploadOutlined />}>选择图片或视频</Button>
+                            </Upload>
+                        </Form.Item>
+                    )}
+                    <Form.Item name="button_text" label="按钮文字" rules={[{ required: true }]}>
                         <Input placeholder="例如: 立即访问" />
                     </Form.Item>
-                    <Form.Item name="button_url" label="跳转链接">
+                    <Form.Item name="button_url" label="跳转链接" rules={[{ required: true }]}>
                         <Input placeholder="https://..." />
-                    </Form.Item>
-                    <Form.Item name="display_order" label="排序">
-                        <Input type="number" defaultValue={0} />
                     </Form.Item>
                     <Form.Item name="is_active" label="启用" valuePropName="checked">
                         <Switch />
