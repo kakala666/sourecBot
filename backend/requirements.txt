@@ -1,0 +1,33 @@
+# 后端依赖
+
+# Web 框架
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# Telegram Bot
+aiogram>=3.4.0
+aiohttp>=3.9.0
+
+# 数据库
+sqlalchemy>=2.0.25
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# 认证
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.1.0
+
+# 数据验证
+pydantic>=2.6.0
+pydantic-settings>=2.1.0
+
+# 环境配置
+python-dotenv>=1.0.0
+
+# 文件处理
+python-multipart>=0.0.9
+aiofiles>=23.2.0
+
+# 工具
+httpx>=0.27.0
