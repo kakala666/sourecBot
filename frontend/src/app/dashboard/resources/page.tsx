@@ -141,6 +141,13 @@ export default function ResourcesPage() {
             render: (text: string | null) => text || <span className="text-gray-400">无标题</span>,
         },
         {
+            title: '描述/文案',
+            dataIndex: 'description',
+            key: 'description',
+            ellipsis: true,
+            render: (text: string | null) => text || <span className="text-gray-400">无描述</span>,
+        },
+        {
             title: '类型',
             dataIndex: 'media_type',
             key: 'media_type',
