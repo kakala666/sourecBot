@@ -151,10 +151,13 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
         [InlineKeyboardButton(text=button_text, callback_data="next_page")]
     ])
     
+    # 构建 caption: 标题 + 描述
     caption = ""
     if resource.title:
-        caption += f"<b>{resource.title}</b>\n\n"
+        caption += f"<b>{resource.title}</b>"
     if resource.description:
+        if caption:
+            caption += "\n\n"
         caption += resource.description
     
     if len(media_files) == 1:
@@ -162,13 +165,15 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
         if media.file_type == "photo":
             await message.answer_photo(
                 photo=media.telegram_file_id,
-                caption=caption,
+                caption=caption or None,
+                parse_mode="HTML",
                 reply_markup=keyboard,
             )
         else:
             await message.answer_video(
                 video=media.telegram_file_id,
-                caption=caption,
+                caption=caption or None,
+                parse_mode="HTML",
                 reply_markup=keyboard,
             )
     else:
@@ -180,11 +185,13 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
                 media_group.append(InputMediaPhoto(
                     media=media.telegram_file_id,
                     caption=caption if i == 0 else None,
+                    parse_mode="HTML" if i == 0 else None,
                 ))
             else:
                 media_group.append(InputMediaVideo(
                     media=media.telegram_file_id,
                     caption=caption if i == 0 else None,
+                    parse_mode="HTML" if i == 0 else None,
                 ))
         
         await message.answer_media_group(media=media_group)
