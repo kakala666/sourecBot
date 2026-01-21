@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, Switch, message, Space, Tag, Tooltip } from 'antd';
-import { PlusOutlined, CopyOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, Switch, message, Space, Tag, Tooltip, InputNumber } from 'antd';
+import { PlusOutlined, CopyOutlined, EditOutlined, DeleteOutlined, LinkOutlined, DisconnectOutlined } from '@ant-design/icons';
 import { inviteLinksApi } from '@/lib/api';
+import api from '@/lib/api';
 
 interface InviteLink {
     id: number;
@@ -13,6 +14,9 @@ interface InviteLink {
     deep_link: string;
     resource_count: number;
     user_count: number;
+    source_channel_id: number | null;
+    source_channel_username: string | null;
+    auto_collect_enabled: boolean;
 }
 
 export default function LinksPage() {
@@ -21,6 +25,11 @@ export default function LinksPage() {
     const [modalOpen, setModalOpen] = useState(false);
     const [editingLink, setEditingLink] = useState<InviteLink | null>(null);
     const [form] = Form.useForm();
+
+    // 频道绑定弹窗
+    const [channelModalOpen, setChannelModalOpen] = useState(false);
+    const [bindingLink, setBindingLink] = useState<InviteLink | null>(null);
+    const [channelForm] = Form.useForm();
 
     useEffect(() => {
         loadLinks();
@@ -84,6 +93,64 @@ export default function LinksPage() {
         message.success('已复制到剪贴板');
     };
 
+    // 打开频道绑定弹窗
+    const handleBindChannel = (link: InviteLink) => {
+        setBindingLink(link);
+        channelForm.setFieldsValue({
+            channel_id: link.source_channel_id || '',
+            channel_username: link.source_channel_username || '',
+            auto_collect_enabled: link.auto_collect_enabled ?? true,
+        });
+        setChannelModalOpen(true);
+    };
+
+    // 提交频道绑定
+    const handleChannelSubmit = async () => {
+        if (!bindingLink) return;
+
+        const values = await channelForm.validateFields();
+        try {
+            await api.patch(`/invite-links/${bindingLink.id}/bind-channel`, {
+                channel_id: values.channel_id,
+                channel_username: values.channel_username || null,
+                auto_collect_enabled: values.auto_collect_enabled,
+            });
+            message.success('频道绑定成功');
+            setChannelModalOpen(false);
+            loadLinks();
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '绑定失败');
+        }
+    };
+
+    // 解绑频道
+    const handleUnbindChannel = async (link: InviteLink) => {
+        Modal.confirm({
+            title: '确认解绑',
+            content: '解绑后将停止自动采集该频道的资源,确定吗?',
+            onOk: async () => {
+                try {
+                    await api.delete(`/invite-links/${link.id}/unbind-channel`);
+                    message.success('已解绑频道');
+                    loadLinks();
+                } catch (error) {
+                    message.error('解绑失败');
+                }
+            },
+        });
+    };
+
+    // 切换自动采集
+    const handleToggleCollect = async (link: InviteLink) => {
+        try {
+            await api.patch(`/invite-links/${link.id}/toggle-collect`);
+            message.success(link.auto_collect_enabled ? '已暂停采集' : '已开启采集');
+            loadLinks();
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '操作失败');
+        }
+    };
+
     const columns = [
         { title: '名称', dataIndex: 'name', key: 'name' },
         { title: '邀请码', dataIndex: 'code', key: 'code' },
@@ -108,6 +175,31 @@ export default function LinksPage() {
                 <Tag color={active ? 'green' : 'red'}>{active ? '启用' : '禁用'}</Tag>
             ),
         },
+        {
+            title: '绑定频道',
+            key: 'channel',
+            render: (_: any, record: InviteLink) => {
+                if (record.source_channel_id) {
+                    return (
+                        <Space>
+                            <Tag color={record.auto_collect_enabled ? 'blue' : 'default'}>
+                                {record.source_channel_username
+                                    ? `@${record.source_channel_username}`
+                                    : record.source_channel_id}
+                            </Tag>
+                            <Tooltip title={record.auto_collect_enabled ? '点击暂停采集' : '点击开启采集'}>
+                                <Switch
+                                    size="small"
+                                    checked={record.auto_collect_enabled}
+                                    onChange={() => handleToggleCollect(record)}
+                                />
+                            </Tooltip>
+                        </Space>
+                    );
+                }
+                return <span style={{ color: '#999' }}>未绑定</span>;
+            },
+        },
         { title: '资源数', dataIndex: 'resource_count', key: 'resource_count' },
         { title: '用户数', dataIndex: 'user_count', key: 'user_count' },
         {
@@ -115,6 +207,24 @@ export default function LinksPage() {
             key: 'action',
             render: (_: any, record: InviteLink) => (
                 <Space>
+                    {record.source_channel_id ? (
+                        <Tooltip title="解绑频道">
+                            <Button
+                                icon={<DisconnectOutlined />}
+                                size="small"
+                                onClick={() => handleUnbindChannel(record)}
+                            />
+                        </Tooltip>
+                    ) : (
+                        <Tooltip title="绑定频道">
+                            <Button
+                                icon={<LinkOutlined />}
+                                size="small"
+                                type="primary"
+                                onClick={() => handleBindChannel(record)}
+                            />
+                        </Tooltip>
+                    )}
                     <Button icon={<EditOutlined />} size="small" onClick={() => handleEdit(record)} />
                     <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(record.id)} />
                 </Space>
@@ -138,6 +248,7 @@ export default function LinksPage() {
                 loading={loading}
             />
 
+            {/* 创建/编辑链接弹窗 */}
             <Modal
                 title={editingLink ? '编辑链接' : '创建链接'}
                 open={modalOpen}
@@ -158,6 +269,43 @@ export default function LinksPage() {
                             <Switch checkedChildren="启用" unCheckedChildren="禁用" />
                         </Form.Item>
                     )}
+                </Form>
+            </Modal>
+
+            {/* 频道绑定弹窗 */}
+            <Modal
+                title="绑定采集频道"
+                open={channelModalOpen}
+                onOk={handleChannelSubmit}
+                onCancel={() => setChannelModalOpen(false)}
+            >
+                <Form form={channelForm} layout="vertical">
+                    <Form.Item
+                        name="channel_id"
+                        label="频道 ID"
+                        rules={[{ required: true, message: '请输入频道ID' }]}
+                        extra="频道ID通常为负数，如 -1001234567890。可通过转发频道消息给 @userinfobot 获取"
+                    >
+                        <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="例如: -1001234567890"
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        name="channel_username"
+                        label="频道用户名 (可选)"
+                        extra="如 @channel_name，仅用于显示"
+                    >
+                        <Input placeholder="例如: my_channel" />
+                    </Form.Item>
+                    <Form.Item
+                        name="auto_collect_enabled"
+                        label="自动采集"
+                        valuePropName="checked"
+                        extra="开启后，Bot 会自动将频道内的媒体消息采集为资源"
+                    >
+                        <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                    </Form.Item>
                 </Form>
             </Modal>
         </div>

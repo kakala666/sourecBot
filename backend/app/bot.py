@@ -13,6 +13,7 @@ from app.bot_handlers.start import router as start_router
 from app.bot_handlers.pagination import router as pagination_router
 from app.bot_handlers.stats_group import router as stats_router
 from app.bot_handlers.service_group import router as service_router
+from app.bot_handlers.channel_collector import router as channel_router
 
 
 # 配置日志
@@ -45,6 +46,7 @@ async def main():
     dp.include_router(pagination_router)
     dp.include_router(stats_router)
     dp.include_router(service_router)
+    dp.include_router(channel_router)
     
     # 启动轮询
     logger.info("Bot 启动成功,开始轮询...")

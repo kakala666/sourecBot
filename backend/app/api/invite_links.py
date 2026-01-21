@@ -41,6 +41,10 @@ class InviteLinkResponse(BaseModel):
     deep_link: str
     resource_count: int = 0
     user_count: int = 0
+    # 频道采集配置
+    source_channel_id: Optional[int] = None
+    source_channel_username: Optional[str] = None
+    auto_collect_enabled: bool = False
     
     class Config:
         from_attributes = True
@@ -220,3 +224,148 @@ async def delete_invite_link(
     
     await db.delete(link)
     await db.commit()
+
+
+# ---------- 频道绑定 API ----------
+
+class BindChannelRequest(BaseModel):
+    """绑定频道请求"""
+    channel_id: int
+    channel_username: Optional[str] = None
+    auto_collect_enabled: bool = True
+
+
+@router.patch("/{link_id}/bind-channel", response_model=InviteLinkResponse)
+async def bind_channel(
+    link_id: int,
+    data: BindChannelRequest,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """绑定频道到邀请链接"""
+    result = await db.execute(
+        select(InviteLink).where(InviteLink.id == link_id)
+    )
+    link = result.scalar_one_or_none()
+    
+    if not link:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="邀请链接不存在"
+        )
+    
+    # 检查频道是否已被其他链接绑定
+    existing = await db.execute(
+        select(InviteLink).where(
+            InviteLink.source_channel_id == data.channel_id,
+            InviteLink.id != link_id
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该频道已被其他链接绑定"
+        )
+    
+    link.source_channel_id = data.channel_id
+    link.source_channel_username = data.channel_username
+    link.auto_collect_enabled = data.auto_collect_enabled
+    
+    await db.commit()
+    await db.refresh(link)
+    
+    return InviteLinkResponse(
+        id=link.id,
+        code=link.code,
+        name=link.name,
+        is_active=link.is_active,
+        deep_link=f"https://t.me/YourBot?start={link.code}",
+        resource_count=0,
+        user_count=0,
+        source_channel_id=link.source_channel_id,
+        source_channel_username=link.source_channel_username,
+        auto_collect_enabled=link.auto_collect_enabled,
+    )
+
+
+@router.delete("/{link_id}/unbind-channel", response_model=InviteLinkResponse)
+async def unbind_channel(
+    link_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """解绑频道"""
+    result = await db.execute(
+        select(InviteLink).where(InviteLink.id == link_id)
+    )
+    link = result.scalar_one_or_none()
+    
+    if not link:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="邀请链接不存在"
+        )
+    
+    link.source_channel_id = None
+    link.source_channel_username = None
+    link.auto_collect_enabled = False
+    
+    await db.commit()
+    await db.refresh(link)
+    
+    return InviteLinkResponse(
+        id=link.id,
+        code=link.code,
+        name=link.name,
+        is_active=link.is_active,
+        deep_link=f"https://t.me/YourBot?start={link.code}",
+        resource_count=0,
+        user_count=0,
+        source_channel_id=None,
+        source_channel_username=None,
+        auto_collect_enabled=False,
+    )
+
+
+@router.patch("/{link_id}/toggle-collect", response_model=InviteLinkResponse)
+async def toggle_auto_collect(
+    link_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """切换自动采集开关"""
+    result = await db.execute(
+        select(InviteLink).where(InviteLink.id == link_id)
+    )
+    link = result.scalar_one_or_none()
+    
+    if not link:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="邀请链接不存在"
+        )
+    
+    if not link.source_channel_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先绑定频道"
+        )
+    
+    link.auto_collect_enabled = not link.auto_collect_enabled
+    
+    await db.commit()
+    await db.refresh(link)
+    
+    return InviteLinkResponse(
+        id=link.id,
+        code=link.code,
+        name=link.name,
+        is_active=link.is_active,
+        deep_link=f"https://t.me/YourBot?start={link.code}",
+        resource_count=0,
+        user_count=0,
+        source_channel_id=link.source_channel_id,
+        source_channel_username=link.source_channel_username,
+        auto_collect_enabled=link.auto_collect_enabled,
+    )
+
