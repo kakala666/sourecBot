@@ -87,6 +87,9 @@ async def list_invite_links(
             deep_link=f"https://t.me/YourBot?start={link.code}",  # TODO: 替换为实际 Bot 用户名
             resource_count=len(link.resources),
             user_count=user_count,
+            source_channel_id=link.source_channel_id,
+            source_channel_username=link.source_channel_username,
+            auto_collect_enabled=link.auto_collect_enabled,
         ))
     
     return response
@@ -126,6 +129,9 @@ async def create_invite_link(
         deep_link=f"https://t.me/YourBot?start={link.code}",
         resource_count=0,
         user_count=0,
+        source_channel_id=link.source_channel_id,
+        source_channel_username=link.source_channel_username,
+        auto_collect_enabled=link.auto_collect_enabled,
     )
 
 
@@ -163,6 +169,9 @@ async def get_invite_link(
         deep_link=f"https://t.me/YourBot?start={link.code}",
         resource_count=len(link.resources),
         user_count=user_count,
+        source_channel_id=link.source_channel_id,
+        source_channel_username=link.source_channel_username,
+        auto_collect_enabled=link.auto_collect_enabled,
     )
 
 
@@ -201,6 +210,9 @@ async def update_invite_link(
         deep_link=f"https://t.me/YourBot?start={link.code}",
         resource_count=0,
         user_count=0,
+        source_channel_id=link.source_channel_id,
+        source_channel_username=link.source_channel_username,
+        auto_collect_enabled=link.auto_collect_enabled,
     )
 
 
