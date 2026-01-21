@@ -12,7 +12,7 @@ from aiogram.types import Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import async_session_maker
+from app.database import AsyncSessionLocal
 from app.models import InviteLink, Resource, MediaFile
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ media_group_locks: Dict[str, asyncio.Lock] = {}
 
 async def get_invite_link_by_channel(channel_id: int) -> InviteLink | None:
     """根据频道ID获取绑定的邀请链接"""
-    async with async_session_maker() as session:
+    async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(InviteLink).where(
                 InviteLink.source_channel_id == channel_id,
@@ -125,7 +125,7 @@ async def process_media_group(media_group_id: str):
     # 按消息ID排序
     messages.sort(key=lambda m: m.message_id)
     
-    async with async_session_maker() as session:
+    async with AsyncSessionLocal() as session:
         await create_resource_from_message(
             session=session,
             invite_link_id=invite_link_id,
@@ -184,7 +184,7 @@ async def handle_channel_media(message: Message):
         else:
             media_type = "document"
         
-        async with async_session_maker() as session:
+        async with AsyncSessionLocal() as session:
             await create_resource_from_message(
                 session=session,
                 invite_link_id=invite_link.id,
