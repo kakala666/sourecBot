@@ -79,13 +79,24 @@ class BackupSyncService:
                     return {"success": False, "error": "已存在备份配置，请先删除"}
                 
                 # 统计需要同步的文件数
+                from app.models import Sponsor
+                
+                # 1. MediaFile 数量
                 media_count = await session.scalar(
                     select(func.count()).select_from(MediaFile)
                 )
-                sponsor_count = await session.scalar(
+                # 2. SponsorMediaFile 数量（媒体组广告）
+                sponsor_media_count = await session.scalar(
                     select(func.count()).select_from(SponsorMediaFile)
                 )
-                total = (media_count or 0) + (sponsor_count or 0)
+                # 3. Sponsor 单个媒体数量（非媒体组且有 telegram_file_id）
+                sponsor_single_count = await session.scalar(
+                    select(func.count()).select_from(Sponsor).where(
+                        Sponsor.telegram_file_id.isnot(None),
+                        Sponsor.media_type != "media_group"
+                    )
+                )
+                total = (media_count or 0) + (sponsor_media_count or 0) + (sponsor_single_count or 0)
                 
                 # 创建配置
                 backup = BotBackup(
@@ -179,17 +190,24 @@ class BackupSyncService:
                 backup_bot = Bot(token=backup.backup_bot_token)
                 
                 try:
-                    # 同步 MediaFile
+                    # 同步 MediaFile（资源媒体）
                     synced, failed = await self._sync_media_files(
                         session, backup_bot, backup_id
                     )
                     
-                    # 同步 SponsorMediaFile
-                    s2, f2 = await self._sync_sponsor_files(
+                    # 同步 SponsorMediaFile（广告媒体组）
+                    s2, f2 = await self._sync_sponsor_media_files(
                         session, backup_bot, backup_id
                     )
                     synced += s2
                     failed += f2
+                    
+                    # 同步 Sponsor 单个媒体
+                    s3, f3 = await self._sync_sponsor_single_files(
+                        session, backup_bot, backup_id
+                    )
+                    synced += s3
+                    failed += f3
                     
                     # 更新状态
                     backup.sync_status = "synced" if failed == 0 else "error"
@@ -231,111 +249,156 @@ class BackupSyncService:
         backup_bot: Bot,
         backup_id: int
     ) -> tuple[int, int]:
-        """同步 MediaFile"""
+        """同步 MediaFile（资源媒体）
+        
+        两种同步方式：
+        1. 有 source_message_id：从来源频道转发
+        2. 无 source_message_id：用主 Bot 发送到存储频道，备份 Bot 转发
+        """
         synced = 0
         failed = 0
         
-        # 获取所有有 source_message_id 的媒体文件
-        result = await session.execute(
-            select(MediaFile).where(
-                MediaFile.source_message_id.isnot(None),
-                MediaFile.source_channel_id.isnot(None)
-            )
-        )
-        media_files = result.scalars().all()
+        # 获取主 Bot
+        main_bot = Bot(token=settings.BOT_TOKEN)
         
-        logger.info(f"待同步 MediaFile: {len(media_files)}")
-        
-        for mf in media_files:
-            if self._stop_flag:
-                logger.info("收到停止信号，退出同步")
-                break
+        try:
+            # 获取所有媒体文件
+            result = await session.execute(select(MediaFile))
+            media_files = result.scalars().all()
             
-            # 检查是否已同步
-            existing = await session.execute(
-                select(FileIdMapping).where(
-                    FileIdMapping.source_type == "resource",
-                    FileIdMapping.source_id == mf.id
-                )
-            )
-            if existing.scalar_one_or_none():
-                synced += 1
-                continue
+            logger.info(f"待同步 MediaFile: {len(media_files)}")
             
-            try:
-                # 转发消息到存储频道
-                forwarded = await backup_bot.forward_message(
-                    chat_id=settings.STORAGE_CHANNEL_ID,
-                    from_chat_id=mf.source_channel_id,
-                    message_id=mf.source_message_id
-                )
+            for mf in media_files:
+                if self._stop_flag:
+                    logger.info("收到停止信号，退出同步")
+                    break
                 
-                # 提取 file_id
-                backup_file_id = None
-                backup_file_unique_id = None
-                
-                if forwarded.photo:
-                    photo = forwarded.photo[-1]
-                    backup_file_id = photo.file_id
-                    backup_file_unique_id = photo.file_unique_id
-                elif forwarded.video:
-                    backup_file_id = forwarded.video.file_id
-                    backup_file_unique_id = forwarded.video.file_unique_id
-                elif forwarded.animation:
-                    backup_file_id = forwarded.animation.file_id
-                    backup_file_unique_id = forwarded.animation.file_unique_id
-                elif forwarded.document:
-                    backup_file_id = forwarded.document.file_id
-                    backup_file_unique_id = forwarded.document.file_unique_id
-                
-                if backup_file_id:
-                    # 更新 MediaFile 的 file_unique_id
-                    if not mf.file_unique_id:
-                        mf.file_unique_id = backup_file_unique_id
-                    
-                    # 创建映射
-                    mapping = FileIdMapping(
-                        file_unique_id=mf.file_unique_id or backup_file_unique_id,
-                        primary_file_id=mf.telegram_file_id,
-                        backup_file_id=backup_file_id,
-                        file_type=mf.file_type,
-                        source_type="resource",
-                        source_id=mf.id
+                # 检查是否已同步
+                existing = await session.execute(
+                    select(FileIdMapping).where(
+                        FileIdMapping.source_type == "resource",
+                        FileIdMapping.source_id == mf.id
                     )
-                    session.add(mapping)
-                    await session.commit()
-                    
+                )
+                if existing.scalar_one_or_none():
                     synced += 1
-                    logger.debug(f"同步成功: MediaFile id={mf.id}")
-                else:
-                    failed += 1
-                    logger.warning(f"无法提取 file_id: MediaFile id={mf.id}")
+                    continue
                 
-                # 删除转发的消息
                 try:
-                    await backup_bot.delete_message(
-                        chat_id=settings.STORAGE_CHANNEL_ID,
-                        message_id=forwarded.message_id
-                    )
-                except:
-                    pass
-                
-                # 速率限制
-                await asyncio.sleep(0.3)
-                
-            except TelegramAPIError as e:
-                failed += 1
-                logger.error(f"同步失败 MediaFile id={mf.id}: {e}")
+                    backup_file_id = None
+                    backup_file_unique_id = None
+                    
+                    if mf.source_message_id and mf.source_channel_id:
+                        # 方式 1：从来源频道转发
+                        forwarded = await backup_bot.forward_message(
+                            chat_id=settings.STORAGE_CHANNEL_ID,
+                            from_chat_id=mf.source_channel_id,
+                            message_id=mf.source_message_id
+                        )
+                        backup_file_id, backup_file_unique_id = self._extract_file_info(forwarded)
+                        
+                        # 删除转发的消息
+                        try:
+                            await backup_bot.delete_message(
+                                chat_id=settings.STORAGE_CHANNEL_ID,
+                                message_id=forwarded.message_id
+                            )
+                        except:
+                            pass
+                    else:
+                        # 方式 2：用主 Bot 发送，备份 Bot 转发
+                        if mf.file_type == "photo":
+                            sent = await main_bot.send_photo(
+                                chat_id=settings.STORAGE_CHANNEL_ID,
+                                photo=mf.telegram_file_id
+                            )
+                        elif mf.file_type == "video":
+                            sent = await main_bot.send_video(
+                                chat_id=settings.STORAGE_CHANNEL_ID,
+                                video=mf.telegram_file_id
+                            )
+                        else:
+                            sent = await main_bot.send_document(
+                                chat_id=settings.STORAGE_CHANNEL_ID,
+                                document=mf.telegram_file_id
+                            )
+                        
+                        # 备份 Bot 转发
+                        forwarded = await backup_bot.forward_message(
+                            chat_id=settings.STORAGE_CHANNEL_ID,
+                            from_chat_id=settings.STORAGE_CHANNEL_ID,
+                            message_id=sent.message_id
+                        )
+                        backup_file_id, backup_file_unique_id = self._extract_file_info(forwarded)
+                        
+                        # 删除临时消息
+                        try:
+                            await main_bot.delete_message(
+                                chat_id=settings.STORAGE_CHANNEL_ID,
+                                message_id=sent.message_id
+                            )
+                            await backup_bot.delete_message(
+                                chat_id=settings.STORAGE_CHANNEL_ID,
+                                message_id=forwarded.message_id
+                            )
+                        except:
+                            pass
+                    
+                    if backup_file_id:
+                        # 更新 MediaFile 的 file_unique_id
+                        if not mf.file_unique_id:
+                            mf.file_unique_id = backup_file_unique_id
+                        
+                        # 创建映射
+                        mapping = FileIdMapping(
+                            file_unique_id=mf.file_unique_id or backup_file_unique_id,
+                            primary_file_id=mf.telegram_file_id,
+                            backup_file_id=backup_file_id,
+                            file_type=mf.file_type,
+                            source_type="resource",
+                            source_id=mf.id
+                        )
+                        session.add(mapping)
+                        await session.commit()
+                        
+                        synced += 1
+                        logger.debug(f"同步成功: MediaFile id={mf.id}")
+                    else:
+                        failed += 1
+                        logger.warning(f"无法提取 file_id: MediaFile id={mf.id}")
+                    
+                    # 速率限制
+                    await asyncio.sleep(0.3)
+                    
+                except TelegramAPIError as e:
+                    failed += 1
+                    logger.error(f"同步失败 MediaFile id={mf.id}: {e}")
+        
+        finally:
+            await main_bot.session.close()
         
         return synced, failed
     
-    async def _sync_sponsor_files(
+    def _extract_file_info(self, message) -> tuple[str | None, str | None]:
+        """从消息中提取 file_id 和 file_unique_id"""
+        if message.photo:
+            photo = message.photo[-1]
+            return photo.file_id, photo.file_unique_id
+        elif message.video:
+            return message.video.file_id, message.video.file_unique_id
+        elif message.animation:
+            return message.animation.file_id, message.animation.file_unique_id
+        elif message.document:
+            return message.document.file_id, message.document.file_unique_id
+        return None, None
+    
+    async def _sync_sponsor_media_files(
         self,
         session: AsyncSession,
         backup_bot: Bot,
         backup_id: int
     ) -> tuple[int, int]:
-        """同步 SponsorMediaFile
+        """同步 SponsorMediaFile（广告媒体组）
         
         广告媒体没有 source_message_id，需要通过发送到存储频道再提取
         """
@@ -446,6 +509,113 @@ class BackupSyncService:
                 except TelegramAPIError as e:
                     failed += 1
                     logger.error(f"同步失败 SponsorMediaFile id={sf.id}: {e}")
+        
+        finally:
+            await main_bot.session.close()
+        
+        return synced, failed
+    
+    async def _sync_sponsor_single_files(
+        self,
+        session: AsyncSession,
+        backup_bot: Bot,
+        backup_id: int
+    ) -> tuple[int, int]:
+        """同步 Sponsor 单个媒体文件
+        
+        处理 media_type 为 photo/video 且有 telegram_file_id 的广告
+        """
+        synced = 0
+        failed = 0
+        
+        from app.models import Sponsor
+        main_bot = Bot(token=settings.BOT_TOKEN)
+        
+        try:
+            # 获取所有有单个媒体的广告
+            result = await session.execute(
+                select(Sponsor).where(
+                    Sponsor.telegram_file_id.isnot(None),
+                    Sponsor.media_type.in_(["photo", "video"])
+                )
+            )
+            sponsors = result.scalars().all()
+            
+            logger.info(f"待同步 Sponsor 单个媒体: {len(sponsors)}")
+            
+            for sponsor in sponsors:
+                if self._stop_flag:
+                    break
+                
+                # 检查是否已同步（用 primary_file_id 查询）
+                existing = await session.execute(
+                    select(FileIdMapping).where(
+                        FileIdMapping.primary_file_id == sponsor.telegram_file_id,
+                        FileIdMapping.source_type == "sponsor_single"
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    synced += 1
+                    continue
+                
+                try:
+                    # 用主 Bot 发送到存储频道
+                    if sponsor.media_type == "photo":
+                        sent = await main_bot.send_photo(
+                            chat_id=settings.STORAGE_CHANNEL_ID,
+                            photo=sponsor.telegram_file_id
+                        )
+                    else:
+                        sent = await main_bot.send_video(
+                            chat_id=settings.STORAGE_CHANNEL_ID,
+                            video=sponsor.telegram_file_id
+                        )
+                    
+                    # 备份 Bot 转发
+                    forwarded = await backup_bot.forward_message(
+                        chat_id=settings.STORAGE_CHANNEL_ID,
+                        from_chat_id=settings.STORAGE_CHANNEL_ID,
+                        message_id=sent.message_id
+                    )
+                    
+                    backup_file_id, file_unique_id = self._extract_file_info(forwarded)
+                    
+                    if backup_file_id:
+                        # 创建映射
+                        mapping = FileIdMapping(
+                            file_unique_id=file_unique_id,
+                            primary_file_id=sponsor.telegram_file_id,
+                            backup_file_id=backup_file_id,
+                            file_type=sponsor.media_type,
+                            source_type="sponsor_single",
+                            source_id=sponsor.id
+                        )
+                        session.add(mapping)
+                        await session.commit()
+                        
+                        synced += 1
+                        logger.debug(f"同步成功: Sponsor 单媒体 id={sponsor.id}")
+                    else:
+                        failed += 1
+                    
+                    # 删除临时消息
+                    try:
+                        await main_bot.delete_message(
+                            chat_id=settings.STORAGE_CHANNEL_ID,
+                            message_id=sent.message_id
+                        )
+                        await backup_bot.delete_message(
+                            chat_id=settings.STORAGE_CHANNEL_ID,
+                            message_id=forwarded.message_id
+                        )
+                    except:
+                        pass
+                    
+                    await asyncio.sleep(0.5)
+                    
+                except TelegramAPIError as e:
+                    failed += 1
+                    logger.error(f"同步失败 Sponsor 单媒体 id={sponsor.id}: {e}")
         
         finally:
             await main_bot.session.close()
