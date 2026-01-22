@@ -11,6 +11,7 @@ import {
     LogoutOutlined,
     UserOutlined,
     SettingOutlined,
+    CloudSyncOutlined,
 } from '@ant-design/icons';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
@@ -46,6 +47,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         { key: '/dashboard/sponsors', icon: <NotificationOutlined />, label: '广告管理' },
         { key: '/dashboard/users', icon: <UserOutlined />, label: '用户列表' },
         { key: '/dashboard/statistics', icon: <BarChartOutlined />, label: '统计报表' },
+        { key: '/dashboard/backup', icon: <CloudSyncOutlined />, label: '备份管理' },
         { key: '/dashboard/settings', icon: <SettingOutlined />, label: '系统设置' },
     ];
 

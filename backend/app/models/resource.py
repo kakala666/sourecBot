@@ -38,8 +38,14 @@ class MediaFile(Base):
     file_type = Column(String(20), nullable=False, comment="文件类型: photo/video")
     file_path = Column(String(500), nullable=True, comment="服务器文件路径")
     telegram_file_id = Column(String(200), nullable=False, comment="Telegram file_id")
+    file_unique_id = Column(String(100), nullable=True, index=True, comment="Telegram file_unique_id (用于备份)")
     file_size = Column(BigInteger, nullable=True, comment="文件大小(字节)")
     position = Column(Integer, default=0, comment="在媒体组中的位置")
+    
+    # 来源信息（用于备份同步）
+    source_channel_id = Column(BigInteger, nullable=True, comment="来源频道 Telegram ID")
+    source_message_id = Column(BigInteger, nullable=True, comment="来源消息 ID")
+    
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     
     # 关系

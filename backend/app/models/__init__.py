@@ -9,6 +9,7 @@ from app.models.sponsor_media import SponsorMediaFile
 from app.models.statistics import Statistics
 from app.models.admin import Admin
 from app.models.config import Config
+from app.models.backup import BotBackup, FileIdMapping
 
 __all__ = [
     "InviteLink",
@@ -23,4 +24,6 @@ __all__ = [
     "Statistics",
     "Admin",
     "Config",
+    "BotBackup",
+    "FileIdMapping",
 ]

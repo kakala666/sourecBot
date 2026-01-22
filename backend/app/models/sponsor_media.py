@@ -16,6 +16,7 @@ class SponsorMediaFile(Base):
     sponsor_id = Column(Integer, ForeignKey("sponsors.id", ondelete="CASCADE"), nullable=False, index=True, comment="所属广告ID")
     file_type = Column(String(20), nullable=False, comment="文件类型: photo/video")
     telegram_file_id = Column(String(200), nullable=False, comment="Telegram file_id")
+    file_unique_id = Column(String(100), nullable=True, index=True, comment="Telegram file_unique_id (用于备份)")
     file_size = Column(Integer, nullable=True, comment="文件大小(字节)")
     position = Column(Integer, default=0, comment="在媒体组中的位置")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")

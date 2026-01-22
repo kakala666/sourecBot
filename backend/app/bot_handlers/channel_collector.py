@@ -71,26 +71,33 @@ async def create_resource_from_message(
     # 创建媒体文件
     for i, msg in enumerate(messages):
         file_id = None
+        file_unique_id = None
         file_type = None
         
         if msg.photo:
             # 获取最大尺寸的图片
-            file_id = msg.photo[-1].file_id
+            photo = msg.photo[-1]
+            file_id = photo.file_id
+            file_unique_id = photo.file_unique_id
             file_type = "photo"
         elif msg.video:
             file_id = msg.video.file_id
+            file_unique_id = msg.video.file_unique_id
             file_type = "video"
         elif msg.animation:
             file_id = msg.animation.file_id
+            file_unique_id = msg.animation.file_unique_id
             file_type = "animation"
         elif msg.document:
             # 检查是否为图片或视频文档
             mime = msg.document.mime_type or ""
             if mime.startswith("image/"):
                 file_id = msg.document.file_id
+                file_unique_id = msg.document.file_unique_id
                 file_type = "photo"
             elif mime.startswith("video/"):
                 file_id = msg.document.file_id
+                file_unique_id = msg.document.file_unique_id
                 file_type = "video"
         
         if file_id and file_type:
@@ -98,6 +105,9 @@ async def create_resource_from_message(
                 resource_id=resource.id,
                 file_type=file_type,
                 telegram_file_id=file_id,
+                file_unique_id=file_unique_id,  # 保存 file_unique_id 用于备份
+                source_channel_id=msg.chat.id if msg.chat else None,  # 保存来源频道
+                source_message_id=msg.message_id,  # 保存来源消息 ID
                 position=i,
             )
             session.add(media_file)

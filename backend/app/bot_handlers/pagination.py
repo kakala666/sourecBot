@@ -10,6 +10,7 @@ from sqlalchemy import select, func
 from app.database import get_db_context
 from app.models import User, UserSession, InviteLink, Resource, MediaFile, Sponsor, AdGroup, InviteLinkAdGroup, Statistics
 from app.config import settings
+from app.services.backup_sync import backup_sync_service
 
 
 router = Router()
@@ -144,6 +145,19 @@ async def handle_next_page(callback: CallbackQuery, bot: Bot):
         await callback.answer()
 
 
+async def get_effective_file_id(media_file) -> str:
+    """获取有效的 file_id
+    
+    如果备份 Bot 激活且有 file_unique_id，返回备份 file_id
+    否则返回原始 file_id
+    """
+    if media_file.file_unique_id:
+        backup_file_id = await backup_sync_service.get_file_id(media_file.file_unique_id)
+        if backup_file_id:
+            return backup_file_id
+    return media_file.telegram_file_id
+
+
 async def send_resource(message, resource: Resource, media_files: list[MediaFile], is_last: bool = False):
     """发送资源"""
     button_text = "下一页 👉" if not is_last else "下一页 👉"
@@ -162,16 +176,17 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
     
     if len(media_files) == 1:
         media = media_files[0]
+        file_id = await get_effective_file_id(media)
         if media.file_type == "photo":
             await message.answer_photo(
-                photo=media.telegram_file_id,
+                photo=file_id,
                 caption=caption or None,
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
         else:
             await message.answer_video(
-                video=media.telegram_file_id,
+                video=file_id,
                 caption=caption or None,
                 parse_mode="HTML",
                 reply_markup=keyboard,
@@ -181,21 +196,35 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
         
         media_group = []
         for i, media in enumerate(media_files):
+            file_id = await get_effective_file_id(media)
             if media.file_type == "photo":
                 media_group.append(InputMediaPhoto(
-                    media=media.telegram_file_id,
+                    media=file_id,
                     caption=caption if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
                 ))
             else:
                 media_group.append(InputMediaVideo(
-                    media=media.telegram_file_id,
+                    media=file_id,
                     caption=caption if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
                 ))
         
         await message.answer_media_group(media=media_group)
         await message.answer("👇 点击继续浏览", reply_markup=keyboard)
+
+
+async def get_sponsor_file_id(sponsor_media_file) -> str:
+    """获取广告媒体的有效 file_id
+    
+    如果备份 Bot 激活且有 file_unique_id，返回备份 file_id
+    否则返回原始 file_id
+    """
+    if sponsor_media_file.file_unique_id:
+        backup_file_id = await backup_sync_service.get_file_id(sponsor_media_file.file_unique_id)
+        if backup_file_id:
+            return backup_file_id
+    return sponsor_media_file.telegram_file_id
 
 
 async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_id: int, invite_code: str):
@@ -253,15 +282,16 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
         media_group = []
         sorted_files = sorted(sponsor.media_files, key=lambda x: x.position)
         for i, media_file in enumerate(sorted_files):
+            file_id = await get_sponsor_file_id(media_file)
             if media_file.file_type == "photo":
                 media_group.append(InputMediaPhoto(
-                    media=media_file.telegram_file_id,
+                    media=file_id,
                     caption=ad_text if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
                 ))
             else:
                 media_group.append(InputMediaVideo(
-                    media=media_file.telegram_file_id,
+                    media=file_id,
                     caption=ad_text if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
                 ))
@@ -270,17 +300,33 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
         if keyboard:
             await message.answer("👆 点击上方广告了解更多", reply_markup=keyboard)
     elif sponsor.telegram_file_id:
-        # 发送单个媒体
+        # 发送单个媒体 - 需要查询 file_unique_id 获取正确的 file_id
+        # Sponsor 表本身没有 file_unique_id，但广告同步时会存入映射表
+        from app.models import FileIdMapping
+        
+        effective_file_id = sponsor.telegram_file_id
+        # 尝试从映射表查询
+        mapping_result = await db.execute(
+            select(FileIdMapping).where(
+                FileIdMapping.primary_file_id == sponsor.telegram_file_id
+            )
+        )
+        mapping = mapping_result.scalar_one_or_none()
+        if mapping:
+            backup_file_id = await backup_sync_service.get_file_id(mapping.file_unique_id)
+            if backup_file_id:
+                effective_file_id = backup_file_id
+        
         if sponsor.media_type == "photo":
             await message.answer_photo(
-                photo=sponsor.telegram_file_id,
+                photo=effective_file_id,
                 caption=ad_text,
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
         else:
             await message.answer_video(
-                video=sponsor.telegram_file_id,
+                video=effective_file_id,
                 caption=ad_text,
                 parse_mode="HTML",
                 reply_markup=keyboard,
