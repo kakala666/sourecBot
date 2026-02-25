@@ -90,6 +90,11 @@ async def create_default_config():
                 "value": "🚀 进入官方平台",
                 "description": "预览结束按钮文字"
             },
+            {
+                "key": "disable_ad_click_tracking",
+                "value": "false",
+                "description": "禁用广告点击统计(true/false)"
+            },
         ]
         
         for config_data in default_configs:

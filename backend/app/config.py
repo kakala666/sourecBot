@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # 服务端口
     API_PORT: int = 9000
     FRONTEND_PORT: int = 3001
+
     
     # 文件限制 (字节)
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024   # 10MB

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Card, Form, Input, Button, message, Spin, Divider, Alert } from 'antd';
+import { Card, Form, Input, Button, message, Spin, Divider, Alert, Switch } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
 import { api } from '@/lib/api';
 
@@ -27,9 +27,13 @@ export default function SettingsPage() {
             setConfigs(response.data);
 
             // 设置表单初始值
-            const initialValues: Record<string, string> = {};
+            const initialValues: Record<string, string | boolean> = {};
             response.data.forEach((c: ConfigItem) => {
-                initialValues[c.key] = c.value || '';
+                if (c.key === 'disable_ad_click_tracking') {
+                    initialValues[c.key] = (c.value || '').toLowerCase() === 'true';
+                } else {
+                    initialValues[c.key] = c.value || '';
+                }
             });
             form.setFieldsValue(initialValues);
         } catch (error) {
@@ -46,7 +50,10 @@ export default function SettingsPage() {
         try {
             // 逐个更新配置
             for (const [key, value] of Object.entries(values)) {
-                await api.patch(`/config/${key}`, { value });
+                const payloadValue = key === 'disable_ad_click_tracking'
+                    ? (value ? 'true' : 'false')
+                    : value;
+                await api.patch(`/config/${key}`, { value: payloadValue });
             }
             message.success('配置已保存');
         } catch (error) {
@@ -108,6 +115,15 @@ export default function SettingsPage() {
                 </Card>
 
                 <Card title="其他设置">
+                    <Form.Item
+                        name="disable_ad_click_tracking"
+                        label="禁用广告点击统计"
+                        extra="开启后点击广告按钮将直接跳转,不提示且不统计"
+                        valuePropName="checked"
+                    >
+                        <Switch />
+                    </Form.Item>
+
                     <Form.Item
                         name="preview_limit"
                         label="预览资源数量限制"

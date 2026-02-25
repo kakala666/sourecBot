@@ -30,6 +30,7 @@ class InviteLink(Base):
     cover_resource = relationship("Resource", foreign_keys=[cover_resource_id])
     users = relationship("User", back_populates="invite_link")
     ad_groups = relationship("AdGroup", secondary="invite_link_ad_groups", back_populates="invite_links")
+    buttons = relationship("InviteLinkButton", back_populates="invite_link", cascade="all, delete-orphan", order_by="InviteLinkButton.display_order")
     
     def __repr__(self):
         return f"<InviteLink(id={self.id}, code='{self.code}', name='{self.name}')>"

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Table, Button, Modal, Form, Input, Switch, message, Space, Tag, Tooltip, InputNumber } from 'antd';
-import { PlusOutlined, CopyOutlined, EditOutlined, DeleteOutlined, LinkOutlined, DisconnectOutlined } from '@ant-design/icons';
+import { PlusOutlined, CopyOutlined, EditOutlined, DeleteOutlined, LinkOutlined, DisconnectOutlined, SettingOutlined } from '@ant-design/icons';
 import { inviteLinksApi } from '@/lib/api';
 import api from '@/lib/api';
 
@@ -17,6 +17,15 @@ interface InviteLink {
     source_channel_id: number | null;
     source_channel_username: string | null;
     auto_collect_enabled: boolean;
+    buttons: LinkButton[];
+}
+
+interface LinkButton {
+    id: number;
+    text: string;
+    url: string;
+    display_order: number;
+    is_active: boolean;
 }
 
 export default function LinksPage() {
@@ -30,6 +39,15 @@ export default function LinksPage() {
     const [channelModalOpen, setChannelModalOpen] = useState(false);
     const [bindingLink, setBindingLink] = useState<InviteLink | null>(null);
     const [channelForm] = Form.useForm();
+
+    // 按钮配置弹窗
+    const [buttonModalOpen, setButtonModalOpen] = useState(false);
+    const [buttonLink, setButtonLink] = useState<InviteLink | null>(null);
+    const [buttons, setButtons] = useState<LinkButton[]>([]);
+    const [buttonLoading, setButtonLoading] = useState(false);
+    const [editingButton, setEditingButton] = useState<LinkButton | null>(null);
+    const [buttonFormOpen, setButtonFormOpen] = useState(false);
+    const [buttonForm] = Form.useForm();
 
     useEffect(() => {
         loadLinks();
@@ -151,6 +169,76 @@ export default function LinksPage() {
         }
     };
 
+    // ========== 按钮配置相关 ==========
+    
+    // 打开按钮配置弹窗
+    const handleConfigButtons = async (link: InviteLink) => {
+        setButtonLink(link);
+        setButtons(link.buttons || []);
+        setButtonModalOpen(true);
+    };
+
+    // 添加按钮
+    const handleAddButton = () => {
+        setEditingButton(null);
+        buttonForm.resetFields();
+        buttonForm.setFieldsValue({ display_order: buttons.length, is_active: true });
+        setButtonFormOpen(true);
+    };
+
+    // 编辑按钮
+    const handleEditButton = (btn: LinkButton) => {
+        setEditingButton(btn);
+        buttonForm.setFieldsValue(btn);
+        setButtonFormOpen(true);
+    };
+
+    // 删除按钮
+    const handleDeleteButton = async (btn: LinkButton) => {
+        if (!buttonLink) return;
+        Modal.confirm({
+            title: '确认删除',
+            content: `确定删除按钮 "${btn.text}" 吗？`,
+            onOk: async () => {
+                try {
+                    await inviteLinksApi.deleteButton(buttonLink.id, btn.id);
+                    message.success('删除成功');
+                    // 刷新按钮列表
+                    const newButtons = await inviteLinksApi.listButtons(buttonLink.id);
+                    setButtons(newButtons);
+                    loadLinks();
+                } catch (error) {
+                    message.error('删除失败');
+                }
+            },
+        });
+    };
+
+    // 提交按钮表单
+    const handleButtonFormSubmit = async () => {
+        if (!buttonLink) return;
+        const values = await buttonForm.validateFields();
+        setButtonLoading(true);
+        try {
+            if (editingButton) {
+                await inviteLinksApi.updateButton(buttonLink.id, editingButton.id, values);
+                message.success('更新成功');
+            } else {
+                await inviteLinksApi.createButton(buttonLink.id, values);
+                message.success('创建成功');
+            }
+            setButtonFormOpen(false);
+            // 刷新按钮列表
+            const newButtons = await inviteLinksApi.listButtons(buttonLink.id);
+            setButtons(newButtons);
+            loadLinks();
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '操作失败');
+        } finally {
+            setButtonLoading(false);
+        }
+    };
+
     const columns = [
         { title: '名称', dataIndex: 'name', key: 'name' },
         { title: '邀请码', dataIndex: 'code', key: 'code' },
@@ -207,6 +295,13 @@ export default function LinksPage() {
             key: 'action',
             render: (_: any, record: InviteLink) => (
                 <Space>
+                    <Tooltip title="配置按钮">
+                        <Button
+                            icon={<SettingOutlined />}
+                            size="small"
+                            onClick={() => handleConfigButtons(record)}
+                        />
+                    </Tooltip>
                     {record.source_channel_id ? (
                         <Tooltip title="解绑频道">
                             <Button
@@ -305,6 +400,106 @@ export default function LinksPage() {
                         extra="开启后，Bot 会自动将频道内的媒体消息采集为资源"
                     >
                         <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            {/* 按钮配置弹窗 */}
+            <Modal
+                title={`配置自定义按钮 - ${buttonLink?.name || ''}`}
+                open={buttonModalOpen}
+                onCancel={() => setButtonModalOpen(false)}
+                footer={[
+                    <Button key="close" onClick={() => setButtonModalOpen(false)}>
+                        关闭
+                    </Button>,
+                ]}
+                width={600}
+            >
+                <div className="mb-4">
+                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAddButton}>
+                        添加按钮
+                    </Button>
+                </div>
+                
+                {buttons.length === 0 ? (
+                    <div className="text-gray-400 text-center py-8">暂无自定义按钮</div>
+                ) : (
+                    <div className="space-y-2">
+                        {buttons.map((btn) => (
+                            <div
+                                key={btn.id}
+                                className="flex items-center justify-between p-3 border rounded-lg"
+                            >
+                                <div className="flex-1">
+                                    <div className="font-medium">
+                                        {btn.text}
+                                        {!btn.is_active && (
+                                            <Tag color="default" className="ml-2">已禁用</Tag>
+                                        )}
+                                    </div>
+                                    <div className="text-gray-400 text-sm truncate max-w-md">
+                                        {btn.url}
+                                    </div>
+                                </div>
+                                <Space>
+                                    <Button
+                                        icon={<EditOutlined />}
+                                        size="small"
+                                        onClick={() => handleEditButton(btn)}
+                                    />
+                                    <Button
+                                        icon={<DeleteOutlined />}
+                                        size="small"
+                                        danger
+                                        onClick={() => handleDeleteButton(btn)}
+                                    />
+                                </Space>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </Modal>
+
+            {/* 按钮编辑表单弹窗 */}
+            <Modal
+                title={editingButton ? '编辑按钮' : '添加按钮'}
+                open={buttonFormOpen}
+                onOk={handleButtonFormSubmit}
+                onCancel={() => setButtonFormOpen(false)}
+                confirmLoading={buttonLoading}
+            >
+                <Form form={buttonForm} layout="vertical">
+                    <Form.Item
+                        name="text"
+                        label="按钮文字"
+                        rules={[{ required: true, message: '请输入按钮文字' }]}
+                    >
+                        <Input placeholder="例如: 加入官方群 💬" maxLength={100} />
+                    </Form.Item>
+                    <Form.Item
+                        name="url"
+                        label="跳转链接"
+                        rules={[
+                            { required: true, message: '请输入跳转链接' },
+                            { type: 'url', message: '请输入有效的 URL' },
+                        ]}
+                    >
+                        <Input placeholder="例如: https://t.me/your_group" />
+                    </Form.Item>
+                    <Form.Item
+                        name="display_order"
+                        label="显示顺序"
+                        extra="数字越小越靠前"
+                    >
+                        <InputNumber min={0} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                        name="is_active"
+                        label="启用状态"
+                        valuePropName="checked"
+                    >
+                        <Switch checkedChildren="启用" unCheckedChildren="禁用" />
                     </Form.Item>
                 </Form>
             </Modal>

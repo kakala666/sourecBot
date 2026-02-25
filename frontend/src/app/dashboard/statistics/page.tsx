@@ -11,6 +11,10 @@ interface LinkStats {
     link_id: number;
     link_name: string;
     link_code: string;
+    users_today: number;
+    views_today: number;
+    ad_views_today: number;
+    ad_clicks_today: number;
     users_7d: number;
     users_30d: number;
     users_total: number;
@@ -40,9 +44,21 @@ interface InviteLink {
     name: string;
 }
 
+interface OverviewStats {
+    total_users: number;
+    users_today: number;
+    total_views: number;
+    views_today: number;
+    ad_views_today: number;
+    ad_clicks_today: number;
+    active_links: number;
+    total_resources: number;
+}
+
 export default function StatisticsPage() {
     const [loading, setLoading] = useState(true);
     const [linkStats, setLinkStats] = useState<LinkStats[]>([]);
+    const [overviewStats, setOverviewStats] = useState<OverviewStats | null>(null);
     const [funnelStats, setFunnelStats] = useState<FunnelStats | null>(null);
     const [links, setLinks] = useState<InviteLink[]>([]);
     const [selectedLinkCode, setSelectedLinkCode] = useState<string | undefined>(undefined);
@@ -58,12 +74,14 @@ export default function StatisticsPage() {
 
     const loadData = async () => {
         try {
-            const [linksData, statsData] = await Promise.all([
+            const [linksData, statsData, overviewData] = await Promise.all([
                 inviteLinksApi.list(),
                 statisticsApi.links(),
+                statisticsApi.overview(),
             ]);
             setLinks(linksData);
             setLinkStats(statsData);
+            setOverviewStats(overviewData);
         } catch (error) {
             console.error('加载失败:', error);
         } finally {
@@ -85,6 +103,10 @@ export default function StatisticsPage() {
     const columns = [
         { title: '链接名称', dataIndex: 'link_name', key: 'link_name' },
         { title: '邀请码', dataIndex: 'link_code', key: 'link_code' },
+        { title: '今日新用户(UTC+8)', dataIndex: 'users_today', key: 'users_today' },
+        { title: '今日浏览量(UTC+8)', dataIndex: 'views_today', key: 'views_today' },
+        { title: '今日广告展示(UTC+8)', dataIndex: 'ad_views_today', key: 'ad_views_today' },
+        { title: '今日广告点击(UTC+8)', dataIndex: 'ad_clicks_today', key: 'ad_clicks_today' },
         { title: '7天新用户', dataIndex: 'users_7d', key: 'users_7d' },
         { title: '30天新用户', dataIndex: 'users_30d', key: 'users_30d' },
         { title: '总用户', dataIndex: 'users_total', key: 'users_total' },
@@ -188,6 +210,21 @@ export default function StatisticsPage() {
     return (
         <div>
             <h1 className="text-2xl font-bold mb-6">统计报表</h1>
+
+            <Row gutter={16} className="mb-6">
+                <Col span={6}>
+                    <Card><Statistic title="今日新用户 (UTC+8)" value={overviewStats?.users_today || 0} /></Card>
+                </Col>
+                <Col span={6}>
+                    <Card><Statistic title="今日浏览量 (UTC+8)" value={overviewStats?.views_today || 0} /></Card>
+                </Col>
+                <Col span={6}>
+                    <Card><Statistic title="今日广告展示 (UTC+8)" value={overviewStats?.ad_views_today || 0} /></Card>
+                </Col>
+                <Col span={6}>
+                    <Card><Statistic title="今日广告点击 (UTC+8)" value={overviewStats?.ad_clicks_today || 0} /></Card>
+                </Col>
+            </Row>
 
             <Row gutter={16} className="mb-6">
                 <Col span={6}>

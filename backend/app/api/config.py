@@ -67,12 +67,16 @@ async def update_config(
     """更新配置"""
     result = await db.execute(select(Config).where(Config.key == key))
     config = result.scalar_one_or_none()
-    
+
     if not config:
-        raise HTTPException(status_code=404, detail="配置不存在")
-    
+        config = Config(key=key, value=data.value, description=None)
+        db.add(config)
+        await db.commit()
+        await db.refresh(config)
+        return config
+
     config.value = data.value
     await db.commit()
     await db.refresh(config)
-    
+
     return config

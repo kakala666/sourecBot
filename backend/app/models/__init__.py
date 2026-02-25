@@ -10,6 +10,7 @@ from app.models.statistics import Statistics
 from app.models.admin import Admin
 from app.models.config import Config
 from app.models.backup import BotBackup, FileIdMapping
+from app.models.invite_link_button import InviteLinkButton
 
 __all__ = [
     "InviteLink",
@@ -26,4 +27,5 @@ __all__ = [
     "Config",
     "BotBackup",
     "FileIdMapping",
+    "InviteLinkButton",
 ]

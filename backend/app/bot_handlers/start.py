@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.database import get_db_context
 from app.models import User, UserSession, InviteLink, Resource, MediaFile, Statistics
+from app.models.invite_link_button import InviteLinkButton
 
 
 router = Router()
@@ -56,6 +57,8 @@ async def handle_start_with_deep_link(message: Message, command: CommandObject):
                 invite_code=invite_code,
             )
             db.add(stat)
+        elif user.invite_code != invite_code:
+            user.invite_code = invite_code
         
         # 创建或更新用户会话
         session_result = await db.execute(
@@ -98,8 +101,16 @@ async def handle_start_with_deep_link(message: Message, command: CommandObject):
             media_files = media_result.scalars().all()
             
             if media_files:
+                # 查询自定义按钮
+                buttons_result = await db.execute(
+                    select(InviteLinkButton)
+                    .where(InviteLinkButton.invite_link_id == invite_link.id, InviteLinkButton.is_active == True)
+                    .order_by(InviteLinkButton.display_order)
+                )
+                custom_buttons = buttons_result.scalars().all()
+                
                 # 发送封面
-                await send_resource(message, cover, media_files)
+                await send_resource(message, cover, media_files, custom_buttons)
             else:
                 await message.answer("⚠️ 封面资源配置错误")
         else:
@@ -132,11 +143,28 @@ async def handle_start_without_deep_link(message: Message):
             pass
 
 
-async def send_resource(message: Message, resource: Resource, media_files: list[MediaFile]):
-    """发送资源"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="下一页 👉", callback_data="next_page")]
-    ])
+async def send_resource(message: Message, resource: Resource, media_files: list[MediaFile], custom_buttons: list = None):
+    """发送资源
+    
+    Args:
+        message: Telegram 消息对象
+        resource: 资源对象
+        media_files: 媒体文件列表
+        custom_buttons: 自定义按钮列表 (InviteLinkButton 对象)
+    """
+    # 构建键盘按钮
+    keyboard_buttons = []
+    
+    # 1. 固定的下一页按钮
+    keyboard_buttons.append([InlineKeyboardButton(text="下一页 👉", callback_data="next_page")])
+    
+    # 2. 添加自定义按钮 (直接跳转 URL)
+    if custom_buttons:
+        for btn in custom_buttons:
+            if btn.is_active:
+                keyboard_buttons.append([InlineKeyboardButton(text=btn.text, url=btn.url)])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     # 准备 caption: 标题 + 描述
     caption = ""
@@ -163,6 +191,7 @@ async def send_resource(message: Message, resource: Resource, media_files: list[
                 caption=caption or None,
                 parse_mode="HTML",
                 reply_markup=keyboard,
+                supports_streaming=True,
             )
     else:
         # 媒体组
@@ -181,6 +210,7 @@ async def send_resource(message: Message, resource: Resource, media_files: list[
                     media=media.telegram_file_id,
                     caption=caption if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
+                    supports_streaming=True,
                 ))
         
         await message.answer_media_group(media=media_group)

@@ -315,7 +315,8 @@ class BackupSyncService:
                         elif mf.file_type == "video":
                             sent = await main_bot.send_video(
                                 chat_id=settings.STORAGE_CHANNEL_ID,
-                                video=mf.telegram_file_id
+                                video=mf.telegram_file_id,
+                                supports_streaming=True,
                             )
                         else:
                             sent = await main_bot.send_document(
@@ -440,7 +441,8 @@ class BackupSyncService:
                     elif sf.file_type == "video":
                         sent = await main_bot.send_video(
                             chat_id=settings.STORAGE_CHANNEL_ID,
-                            video=sf.telegram_file_id
+                            video=sf.telegram_file_id,
+                            supports_streaming=True,
                         )
                     else:
                         sent = await main_bot.send_document(
@@ -568,7 +570,8 @@ class BackupSyncService:
                     else:
                         sent = await main_bot.send_video(
                             chat_id=settings.STORAGE_CHANNEL_ID,
-                            video=sponsor.telegram_file_id
+                            video=sponsor.telegram_file_id,
+                            supports_streaming=True,
                         )
                     
                     # 备份 Bot 转发

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Table, Button, Modal, Form, Input, Upload, Switch, message, Space, Tag, Select, Popconfirm, Radio, Alert } from 'antd';
-import { PlusOutlined, UploadOutlined, DeleteOutlined, StarOutlined, StarFilled, HolderOutlined } from '@ant-design/icons';
+import { PlusOutlined, UploadOutlined, DeleteOutlined, StarOutlined, StarFilled, HolderOutlined, EditOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { resourcesApi, inviteLinksApi, api } from '@/lib/api';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -59,9 +59,13 @@ export default function ResourcesPage() {
     const [links, setLinks] = useState<InviteLink[]>([]);
     const [selectedLinkId, setSelectedLinkId] = useState<number | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
+    const [editModalOpen, setEditModalOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [savingEdit, setSavingEdit] = useState(false);
     const [uploadMode, setUploadMode] = useState<'single' | 'group'>('single');
+    const [editingResource, setEditingResource] = useState<Resource | null>(null);
     const [form] = Form.useForm();
+    const [editForm] = Form.useForm();
 
     // 拖拽传感器配置
     const sensors = useSensors(
@@ -110,6 +114,37 @@ export default function ResourcesPage() {
         form.resetFields();
         setUploadMode('single');
         setModalOpen(true);
+    };
+
+    const handleEdit = (record: Resource) => {
+        setEditingResource(record);
+        editForm.setFieldsValue({
+            title: record.title || '',
+            description: record.description || '',
+        });
+        setEditModalOpen(true);
+    };
+
+    const handleEditSubmit = async () => {
+        if (!editingResource) return;
+        const values = await editForm.validateFields();
+        const payload = {
+            title: values.title?.trim() || null,
+            description: values.description?.trim() || null,
+        };
+
+        setSavingEdit(true);
+        try {
+            await resourcesApi.update(editingResource.id, payload);
+            message.success('更新成功');
+            setEditModalOpen(false);
+            setEditingResource(null);
+            loadResources();
+        } catch (error: any) {
+            message.error(error.response?.data?.detail || '更新失败');
+        } finally {
+            setSavingEdit(false);
+        }
     };
 
     const handleSubmit = async () => {
@@ -259,6 +294,9 @@ export default function ResourcesPage() {
             key: 'action',
             render: (_: any, record: Resource) => (
                 <Space>
+                    <Button icon={<EditOutlined />} size="small" onClick={() => handleEdit(record)}>
+                        编辑
+                    </Button>
                     <Popconfirm title="确定删除?" onConfirm={() => handleDelete(record.id)}>
                         <Button icon={<DeleteOutlined />} size="small" danger />
                     </Popconfirm>
@@ -366,6 +404,27 @@ export default function ResourcesPage() {
                             <Switch />
                         </Form.Item>
                     )}
+                </Form>
+            </Modal>
+
+            <Modal
+                title="编辑文案"
+                open={editModalOpen}
+                onOk={handleEditSubmit}
+                onCancel={() => {
+                    setEditModalOpen(false);
+                    setEditingResource(null);
+                }}
+                confirmLoading={savingEdit}
+                width={500}
+            >
+                <Form form={editForm} layout="vertical">
+                    <Form.Item name="title" label="标题">
+                        <Input placeholder="可选" />
+                    </Form.Item>
+                    <Form.Item name="description" label="描述/文案">
+                        <Input.TextArea placeholder="可选" rows={4} />
+                    </Form.Item>
                 </Form>
             </Modal>
         </div>

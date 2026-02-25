@@ -70,6 +70,22 @@ export const inviteLinksApi = {
   delete: async (id: number) => {
     await api.delete(`/invite-links/${id}`);
   },
+  // 自定义按钮 API
+  listButtons: async (linkId: number) => {
+    const response = await api.get(`/invite-links/${linkId}/buttons`);
+    return response.data;
+  },
+  createButton: async (linkId: number, data: { text: string; url: string; display_order?: number; is_active?: boolean }) => {
+    const response = await api.post(`/invite-links/${linkId}/buttons`, data);
+    return response.data;
+  },
+  updateButton: async (linkId: number, buttonId: number, data: { text?: string; url?: string; display_order?: number; is_active?: boolean }) => {
+    const response = await api.patch(`/invite-links/${linkId}/buttons/${buttonId}`, data);
+    return response.data;
+  },
+  deleteButton: async (linkId: number, buttonId: number) => {
+    await api.delete(`/invite-links/${linkId}/buttons/${buttonId}`);
+  },
 };
 
 export const resourcesApi = {

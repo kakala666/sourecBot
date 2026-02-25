@@ -17,6 +17,21 @@ from app.api.auth import get_current_admin
 router = APIRouter()
 
 
+def _utc8_now() -> datetime:
+    """获取 UTC+8 当前时间"""
+    return datetime.utcnow() + timedelta(hours=8)
+
+
+def _utc8_day_start(dt_utc8: datetime) -> datetime:
+    """获取 UTC+8 当天起点"""
+    return dt_utc8.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _to_utc(dt_utc8: datetime) -> datetime:
+    """将 UTC+8 时间转换为 UTC"""
+    return dt_utc8 - timedelta(hours=8)
+
+
 # ---------- Schema ----------
 
 class OverviewStats(BaseModel):
@@ -25,6 +40,8 @@ class OverviewStats(BaseModel):
     users_today: int
     total_views: int
     views_today: int
+    ad_views_today: int
+    ad_clicks_today: int
     active_links: int
     total_resources: int
 
@@ -34,6 +51,10 @@ class LinkStats(BaseModel):
     link_id: int
     link_name: str
     link_code: str
+    users_today: int
+    views_today: int
+    ad_views_today: int
+    ad_clicks_today: int
     users_7d: int
     users_30d: int
     users_total: int
@@ -69,8 +90,8 @@ async def get_overview_stats(
     _: None = Depends(get_current_admin)
 ):
     """获取概览统计"""
-    now = datetime.utcnow()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    now_utc8 = _utc8_now()
+    today_start = _to_utc(_utc8_day_start(now_utc8))
     
     # 总用户数
     total_users_result = await db.execute(
@@ -101,6 +122,26 @@ async def get_overview_stats(
         ))
     )
     views_today = views_today_result.scalar() or 0
+
+    # 今日广告展示
+    ad_views_today_result = await db.execute(
+        select(func.count()).select_from(Statistics)
+        .where(and_(
+            Statistics.event_type == "ad_view",
+            Statistics.created_at >= today_start
+        ))
+    )
+    ad_views_today = ad_views_today_result.scalar() or 0
+
+    # 今日广告点击
+    ad_clicks_today_result = await db.execute(
+        select(func.count()).select_from(Statistics)
+        .where(and_(
+            Statistics.event_type == "ad_click",
+            Statistics.created_at >= today_start
+        ))
+    )
+    ad_clicks_today = ad_clicks_today_result.scalar() or 0
     
     # 活跃链接数
     active_links_result = await db.execute(
@@ -121,6 +162,8 @@ async def get_overview_stats(
         users_today=users_today,
         total_views=total_views,
         views_today=views_today,
+        ad_views_today=ad_views_today,
+        ad_clicks_today=ad_clicks_today,
         active_links=active_links,
         total_resources=total_resources,
     )
@@ -132,9 +175,10 @@ async def get_link_stats(
     _: None = Depends(get_current_admin)
 ):
     """获取所有邀请链接统计"""
-    now = datetime.utcnow()
-    date_7d = now - timedelta(days=7)
-    date_30d = now - timedelta(days=30)
+    now_utc8 = _utc8_now()
+    today_start = _to_utc(_utc8_day_start(now_utc8))
+    date_7d = _to_utc(now_utc8 - timedelta(days=7))
+    date_30d = _to_utc(now_utc8 - timedelta(days=30))
     
     # 获取所有邀请链接
     links_result = await db.execute(select(InviteLink))
@@ -142,6 +186,43 @@ async def get_link_stats(
     
     stats = []
     for link in links:
+        # 今日统计
+        users_today_result = await db.execute(
+            select(func.count()).select_from(User)
+            .where(and_(User.invite_code == link.code, User.first_seen >= today_start))
+        )
+        users_today = users_today_result.scalar() or 0
+
+        views_today_result = await db.execute(
+            select(func.count()).select_from(Statistics)
+            .where(and_(
+                Statistics.invite_code == link.code,
+                Statistics.event_type == "page_view",
+                Statistics.created_at >= today_start
+            ))
+        )
+        views_today = views_today_result.scalar() or 0
+
+        ad_views_today_result = await db.execute(
+            select(func.count()).select_from(Statistics)
+            .where(and_(
+                Statistics.invite_code == link.code,
+                Statistics.event_type == "ad_view",
+                Statistics.created_at >= today_start
+            ))
+        )
+        ad_views_today = ad_views_today_result.scalar() or 0
+
+        ad_clicks_today_result = await db.execute(
+            select(func.count()).select_from(Statistics)
+            .where(and_(
+                Statistics.invite_code == link.code,
+                Statistics.event_type == "ad_click",
+                Statistics.created_at >= today_start
+            ))
+        )
+        ad_clicks_today = ad_clicks_today_result.scalar() or 0
+
         # 用户统计
         users_7d_result = await db.execute(
             select(func.count()).select_from(User)
@@ -209,6 +290,10 @@ async def get_link_stats(
             link_id=link.id,
             link_name=link.name,
             link_code=link.code,
+            users_today=users_today,
+            views_today=views_today,
+            ad_views_today=ad_views_today,
+            ad_clicks_today=ad_clicks_today,
             users_7d=users_7d,
             users_30d=users_30d,
             users_total=users_total,
@@ -273,12 +358,13 @@ async def get_daily_stats(
     _: None = Depends(get_current_admin)
 ):
     """获取每日统计数据"""
-    now = datetime.utcnow()
+    now_utc8 = _utc8_now()
     
     stats = []
     for i in range(days):
-        date = now - timedelta(days=i)
-        date_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
+        date = now_utc8 - timedelta(days=i)
+        date_start_local = date.replace(hour=0, minute=0, second=0, microsecond=0)
+        date_start = _to_utc(date_start_local)
         date_end = date_start + timedelta(days=1)
         
         # 用户数
@@ -314,7 +400,7 @@ async def get_daily_stats(
         ad_clicks = clicks_result.scalar() or 0
         
         stats.append(DailyStats(
-            date=date_start.strftime('%Y-%m-%d'),
+            date=date_start_local.strftime('%Y-%m-%d'),
             users=users,
             views=views,
             ad_clicks=ad_clicks,
@@ -346,8 +432,8 @@ async def get_funnel_stats(
     _: None = Depends(get_current_admin)
 ):
     """获取用户行为漏斗统计"""
-    now = datetime.utcnow()
-    since_date = now - timedelta(days=days)
+    now_utc8 = _utc8_now()
+    since_date = _to_utc(now_utc8 - timedelta(days=days))
     
     # 构建基础过滤条件
     base_filter = [Statistics.created_at >= since_date]

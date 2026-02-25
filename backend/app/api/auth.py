@@ -4,7 +4,9 @@
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,7 @@ from app.utils.auth import verify_password, create_access_token, decode_access_t
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+logger = logging.getLogger(__name__)
 
 
 async def get_current_admin(
@@ -52,9 +55,30 @@ async def get_current_admin(
 @router.post("/login", response_model=Token)
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """管理员登录"""
+    password_length = len(form_data.password.encode("utf-8"))
+    client_host = request.client.host if request.client else "unknown"
+    content_type = request.headers.get("content-type")
+    content_length = request.headers.get("content-length")
+    body_length = None
+    try:
+        raw_body = await request.body()
+        body_length = len(raw_body) if raw_body is not None else 0
+    except Exception as exc:
+        logger.warning("读取登录请求体长度失败: %s", exc)
+
+    logger.warning(
+        "登录请求诊断: 用户名=%s, 密码长度=%s 字节, Content-Type=%s, Content-Length=%s, Body-Length=%s, 来源=%s",
+        form_data.username,
+        password_length,
+        content_type,
+        content_length,
+        body_length,
+        client_host,
+    )
     # 查询管理员
     result = await db.execute(
         select(Admin).where(Admin.username == form_data.username)

@@ -5,6 +5,8 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+import logging
+
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
@@ -14,6 +16,8 @@ from app.config import settings
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+logger = logging.getLogger(__name__)
+
 
 def hash_password(password: str) -> str:
     """对密码进行哈希"""
@@ -22,7 +26,15 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证密码"""
-    return pwd_context.verify(plain_password, hashed_password)
+    password_length = len(plain_password.encode("utf-8"))
+    if password_length > 72:
+        logger.warning("登录密码长度超出 bcrypt 限制: %s 字节", password_length)
+        return False
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except ValueError as exc:
+        logger.warning("密码校验异常: %s (长度: %s 字节)", exc, password_length)
+        return False
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

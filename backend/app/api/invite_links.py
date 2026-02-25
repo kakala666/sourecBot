@@ -12,6 +12,7 @@ import string
 
 from app.database import get_db
 from app.models import InviteLink, User
+from app.models.invite_link_button import InviteLinkButton
 from app.api.auth import get_current_admin
 
 
@@ -32,6 +33,36 @@ class InviteLinkUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+# ---------- Button Schema ----------
+
+class ButtonCreate(BaseModel):
+    """创建按钮请求"""
+    text: str
+    url: str
+    display_order: Optional[int] = 0
+    is_active: Optional[bool] = True
+
+
+class ButtonUpdate(BaseModel):
+    """更新按钮请求"""
+    text: Optional[str] = None
+    url: Optional[str] = None
+    display_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class ButtonResponse(BaseModel):
+    """按钮响应"""
+    id: int
+    text: str
+    url: str
+    display_order: int
+    is_active: bool
+    
+    class Config:
+        from_attributes = True
+
+
 class InviteLinkResponse(BaseModel):
     """邀请链接响应"""
     id: int
@@ -45,6 +76,8 @@ class InviteLinkResponse(BaseModel):
     source_channel_id: Optional[int] = None
     source_channel_username: Optional[str] = None
     auto_collect_enabled: bool = False
+    # 自定义按钮
+    buttons: List[ButtonResponse] = []
     
     class Config:
         from_attributes = True
@@ -66,7 +99,7 @@ async def list_invite_links(
     """获取邀请链接列表"""
     result = await db.execute(
         select(InviteLink)
-        .options(selectinload(InviteLink.resources))
+        .options(selectinload(InviteLink.resources), selectinload(InviteLink.buttons))
         .order_by(InviteLink.created_at.desc())
     )
     links = result.scalars().all()
@@ -79,6 +112,18 @@ async def list_invite_links(
         )
         user_count = user_count_result.scalar() or 0
         
+        # 构建按钮响应
+        buttons = [
+            ButtonResponse(
+                id=btn.id,
+                text=btn.text,
+                url=btn.url,
+                display_order=btn.display_order,
+                is_active=btn.is_active,
+            )
+            for btn in link.buttons
+        ]
+        
         response.append(InviteLinkResponse(
             id=link.id,
             code=link.code,
@@ -90,6 +135,7 @@ async def list_invite_links(
             source_channel_id=link.source_channel_id,
             source_channel_username=link.source_channel_username,
             auto_collect_enabled=link.auto_collect_enabled,
+            buttons=buttons,
         ))
     
     return response
@@ -102,10 +148,8 @@ async def create_invite_link(
     _: None = Depends(get_current_admin)
 ):
     """创建邀请链接"""
-    # 生成或使用提供的邀请码
     code = data.code or generate_invite_code()
-    
-    # 检查邀请码是否已存在
+
     existing = await db.execute(
         select(InviteLink).where(InviteLink.code == code)
     )
@@ -114,13 +158,12 @@ async def create_invite_link(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"邀请码 '{code}' 已存在"
         )
-    
-    # 创建邀请链接
+
     link = InviteLink(code=code, name=data.name)
     db.add(link)
     await db.commit()
     await db.refresh(link)
-    
+
     return InviteLinkResponse(
         id=link.id,
         code=link.code,
@@ -132,7 +175,130 @@ async def create_invite_link(
         source_channel_id=link.source_channel_id,
         source_channel_username=link.source_channel_username,
         auto_collect_enabled=link.auto_collect_enabled,
+        buttons=[],
     )
+
+
+# ---------- 自定义按钮 API ----------
+
+@router.get("/{link_id}/buttons", response_model=List[ButtonResponse])
+async def list_buttons(
+    link_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """获取邀请链接的所有按钮"""
+    # 验证链接存在
+    link_result = await db.execute(
+        select(InviteLink).where(InviteLink.id == link_id)
+    )
+    if not link_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="邀请链接不存在"
+        )
+    
+    result = await db.execute(
+        select(InviteLinkButton)
+        .where(InviteLinkButton.invite_link_id == link_id)
+        .order_by(InviteLinkButton.display_order)
+    )
+    buttons = result.scalars().all()
+    return buttons
+
+
+@router.post("/{link_id}/buttons", response_model=ButtonResponse, status_code=status.HTTP_201_CREATED)
+async def create_button(
+    link_id: int,
+    data: ButtonCreate,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """创建自定义按钮"""
+    # 验证链接存在
+    link_result = await db.execute(
+        select(InviteLink).where(InviteLink.id == link_id)
+    )
+    if not link_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="邀请链接不存在"
+        )
+    
+    button = InviteLinkButton(
+        invite_link_id=link_id,
+        text=data.text,
+        url=data.url,
+        display_order=data.display_order,
+        is_active=data.is_active,
+    )
+    db.add(button)
+    await db.commit()
+    await db.refresh(button)
+    return button
+
+
+@router.patch("/{link_id}/buttons/{button_id}", response_model=ButtonResponse)
+async def update_button(
+    link_id: int,
+    button_id: int,
+    data: ButtonUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """更新自定义按钮"""
+    result = await db.execute(
+        select(InviteLinkButton).where(
+            InviteLinkButton.id == button_id,
+            InviteLinkButton.invite_link_id == link_id
+        )
+    )
+    button = result.scalar_one_or_none()
+    
+    if not button:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="按钮不存在"
+        )
+    
+    if data.text is not None:
+        button.text = data.text
+    if data.url is not None:
+        button.url = data.url
+    if data.display_order is not None:
+        button.display_order = data.display_order
+    if data.is_active is not None:
+        button.is_active = data.is_active
+    
+    await db.commit()
+    await db.refresh(button)
+    return button
+
+
+@router.delete("/{link_id}/buttons/{button_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_button(
+    link_id: int,
+    button_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(get_current_admin)
+):
+    """删除自定义按钮"""
+    result = await db.execute(
+        select(InviteLinkButton).where(
+            InviteLinkButton.id == button_id,
+            InviteLinkButton.invite_link_id == link_id
+        )
+    )
+    button = result.scalar_one_or_none()
+    
+    if not button:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="按钮不存在"
+        )
+    
+    await db.delete(button)
+    await db.commit()
 
 
 @router.get("/{link_id}", response_model=InviteLinkResponse)

@@ -8,9 +8,10 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardBut
 from sqlalchemy import select, func
 
 from app.database import get_db_context
-from app.models import User, UserSession, InviteLink, Resource, MediaFile, Sponsor, AdGroup, InviteLinkAdGroup, Statistics
-from app.config import settings
+from app.models import User, UserSession, InviteLink, Resource, MediaFile, Sponsor, AdGroup, InviteLinkAdGroup, Statistics, Config
+from app.models.invite_link_button import InviteLinkButton
 from app.services.backup_sync import backup_sync_service
+from app.utils.url import is_https_url
 
 
 router = Router()
@@ -26,6 +27,59 @@ def get_wait_time(wait_count: int) -> int:
     if wait_count < len(WAIT_TIMES):
         return WAIT_TIMES[wait_count]
     return WAIT_TIMES[-1]
+
+
+def _is_config_true(value: str | None) -> bool:
+    """将配置值解析为布尔值"""
+    if not value:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def is_ad_click_tracking_disabled(db) -> bool:
+    """是否禁用广告点击统计"""
+    result = await db.execute(
+        select(Config).where(Config.key == "disable_ad_click_tracking")
+    )
+    config = result.scalar_one_or_none()
+    if not config:
+        config = Config(
+            key="disable_ad_click_tracking",
+            value="false",
+            description="禁用广告点击统计(true/false)",
+        )
+        db.add(config)
+        return False
+
+    return _is_config_true(config.value)
+
+
+def _parse_config_int(value: str | None, default: int) -> int:
+    """将配置值解析为整数"""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+async def get_preview_limit(db) -> int:
+    """获取预览资源数量限制"""
+    result = await db.execute(
+        select(Config).where(Config.key == "preview_limit")
+    )
+    config = result.scalar_one_or_none()
+    if not config:
+        config = Config(
+            key="preview_limit",
+            value=str(PREVIEW_LIMIT),
+            description="预览资源数量限制",
+        )
+        db.add(config)
+        return PREVIEW_LIMIT
+
+    return _parse_config_int(config.value, PREVIEW_LIMIT)
 
 
 @router.callback_query(F.data == "next_page")
@@ -65,8 +119,10 @@ async def handle_next_page(callback: CallbackQuery, bot: Bot):
         current_page = session.current_page
         total_resources = len(resources)
         
+        preview_limit = await get_preview_limit(db)
+
         # 检查是否需要显示预览结束
-        if current_page >= PREVIEW_LIMIT or (current_page >= total_resources and total_resources > 0):
+        if current_page >= preview_limit or (current_page >= total_resources and total_resources > 0):
             await send_preview_end(callback.message, db, user_id, session.invite_code)
             session.current_page = 0
             session.wait_count = 0
@@ -138,9 +194,17 @@ async def handle_next_page(callback: CallbackQuery, bot: Bot):
             
             # 检查下一页是否是最后一页
             next_page = current_page + 1
-            is_last = (next_page >= PREVIEW_LIMIT) or (next_page >= total_resources)
-            
-            await send_resource(callback.message, resource, media_files, is_last)
+            is_last = (next_page >= preview_limit) or (next_page >= total_resources)
+
+            # 查询自定义按钮
+            buttons_result = await db.execute(
+                select(InviteLinkButton)
+                .where(InviteLinkButton.invite_link_id == invite_link.id, InviteLinkButton.is_active == True)
+                .order_by(InviteLinkButton.display_order)
+            )
+            custom_buttons = buttons_result.scalars().all()
+
+            await send_resource(callback.message, resource, media_files, is_last, custom_buttons)
         
         await callback.answer()
 
@@ -158,12 +222,30 @@ async def get_effective_file_id(media_file) -> str:
     return media_file.telegram_file_id
 
 
-async def send_resource(message, resource: Resource, media_files: list[MediaFile], is_last: bool = False):
-    """发送资源"""
-    button_text = "下一页 👉" if not is_last else "下一页 👉"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=button_text, callback_data="next_page")]
-    ])
+async def send_resource(message, resource: Resource, media_files: list[MediaFile], is_last: bool = False, custom_buttons: list = None):
+    """发送资源
+    
+    Args:
+        message: Telegram 消息对象
+        resource: 资源对象
+        media_files: 媒体文件列表
+        is_last: 是否为最后一页
+        custom_buttons: 自定义按钮列表 (InviteLinkButton 对象)
+    """
+    # 构建键盘按钮
+    keyboard_buttons = []
+    
+    # 1. 固定的下一页按钮
+    button_text = "下一页 👉"
+    keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data="next_page")])
+    
+    # 2. 添加自定义按钮 (直接跳转 URL)
+    if custom_buttons:
+        for btn in custom_buttons:
+            if btn.is_active:
+                keyboard_buttons.append([InlineKeyboardButton(text=btn.text, url=btn.url)])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     # 构建 caption: 标题 + 描述
     caption = ""
@@ -190,6 +272,7 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
                 caption=caption or None,
                 parse_mode="HTML",
                 reply_markup=keyboard,
+                supports_streaming=True,
             )
     else:
         from aiogram.types import InputMediaPhoto, InputMediaVideo
@@ -208,6 +291,7 @@ async def send_resource(message, resource: Resource, media_files: list[MediaFile
                     media=file_id,
                     caption=caption if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
+                    supports_streaming=True,
                 ))
         
         await message.answer_media_group(media=media_group)
@@ -264,15 +348,25 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
     if sponsor.description:
         ad_text += f"\n\n{sponsor.description}"
     
-    # 构建键盘 (先记录点击再跳转)
+    # 构建键盘 (根据配置切换回调/直跳)
     keyboard = None
     if sponsor.button_text and sponsor.button_url:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=sponsor.button_text,
-                callback_data=f"ad_click:{sponsor.id}"
-            )]
-        ])
+        disabled = await is_ad_click_tracking_disabled(db)
+        if disabled:
+            if is_https_url(sponsor.button_url):
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=sponsor.button_text,
+                        url=sponsor.button_url
+                    )]
+                ])
+        else:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=sponsor.button_text,
+                    callback_data=f"ad_click:{sponsor.id}",
+                )]
+            ])
     
     # 发送广告
     if sponsor.media_type == "media_group" and sponsor.media_files:
@@ -294,6 +388,7 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
                     media=file_id,
                     caption=ad_text if i == 0 else None,
                     parse_mode="HTML" if i == 0 else None,
+                    supports_streaming=True,
                 ))
         
         await message.answer_media_group(media=media_group)
@@ -330,6 +425,7 @@ async def send_sponsor_ad(message, db, invite_link_id: int, ad_index: int, user_
                 caption=ad_text,
                 parse_mode="HTML",
                 reply_markup=keyboard,
+                supports_streaming=True,
             )
     else:
         # 纯文字广告
@@ -381,46 +477,52 @@ async def send_preview_end(message, db, user_id: int, invite_code: str):
 
 @router.callback_query(F.data.startswith("ad_click:"))
 async def handle_ad_click(callback: CallbackQuery):
-    """处理广告点击"""
-    sponsor_id = int(callback.data.split(":")[1])
+    """处理广告点击统计"""
     user_id = callback.from_user.id
-    
+    sponsor_id_raw = callback.data.split(":", 1)[1] if callback.data else ""
+    try:
+        sponsor_id = int(sponsor_id_raw)
+    except ValueError:
+        await callback.answer("广告不可用", show_alert=True)
+        return
+
     async with get_db_context() as db:
-        # 获取广告
+        if await is_ad_click_tracking_disabled(db):
+            await callback.answer()
+            return
+
         sponsor_result = await db.execute(
             select(Sponsor).where(Sponsor.id == sponsor_id)
         )
         sponsor = sponsor_result.scalar_one_or_none()
-        
         if not sponsor or not sponsor.button_url:
-            await callback.answer("广告已失效")
+            await callback.answer("广告不可用", show_alert=True)
             return
-        
-        # 获取用户会话的邀请码
+
         session_result = await db.execute(
             select(UserSession).where(UserSession.user_id == user_id)
         )
         session = session_result.scalar_one_or_none()
         invite_code = session.invite_code if session else None
-        
-        # 记录点击
+
+        loading_msg = await callback.message.answer("正在加载...")
         stat = Statistics(
             event_type="ad_click",
             user_id=user_id,
             invite_code=invite_code,
-            sponsor_id=sponsor_id,
+            sponsor_id=sponsor.id,
         )
         db.add(stat)
-        await db.commit()
-        
-        # 发送跳转链接
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🌐 打开链接", url=sponsor.button_url)]
-        ])
-        
-        await callback.message.answer(
-            f"🔗 点击下方按钮访问:\n{sponsor.button_url}",
-            reply_markup=keyboard,
-        )
-        
-        await callback.answer("正在跳转...")
+
+    await callback.answer()
+    await asyncio.sleep(1.5)
+
+    if not is_https_url(sponsor.button_url):
+        await loading_msg.edit_text("网络波动，请重试")
+        return
+
+    button_text = sponsor.button_text or "进入频道"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=button_text, url=sponsor.button_url)]
+    ])
+    await loading_msg.edit_text("网络波动，请重试", reply_markup=keyboard)
