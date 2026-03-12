@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小时
     ALGORITHM: str = "HS256"
     
+    # 广播 API 密钥
+    BROADCAST_API_KEY: str = "change-me-in-production"
+
     # 服务端口
     API_PORT: int = 9000
     FRONTEND_PORT: int = 3001

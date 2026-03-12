@@ -6,9 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from aiogram import Bot
+
 from app.config import settings
 from app.database import init_db, close_db
 from app.api import router as api_router
+from app.services.broadcast import BroadcastService
 
 
 @asynccontextmanager
@@ -16,8 +19,12 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     await init_db()
+    # 创建 Bot 实例供广播服务使用
+    bot = Bot(token=settings.BOT_TOKEN)
+    app.state.broadcast_service = BroadcastService(bot)
     yield
     # 关闭时
+    await bot.session.close()
     await close_db()
 
 
